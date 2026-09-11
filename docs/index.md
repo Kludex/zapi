@@ -34,7 +34,7 @@ There are no decorators in Zig, so `zapi` uses Starlette-style route objects ins
 - JSON, text, HTML, bytes, file, redirect, empty, and problem responses.
 - OpenAPI 3.1 generated from endpoint signatures.
 - Swagger UI at `/docs` and ReDoc at `/redoc` by default.
-- In-process testing with `App.handle`, `App.handleOrRaise`, `Request.builder`, and `TestClient`.
+- In-process testing with `ZAPI.handle`, `ZAPI.handleOrRaise`, `Request.builder`, and `TestClient`.
 - Middleware for CORS, trusted hosts, HTTPS redirects, proxy headers, request IDs, security headers, GZip, method override, request body limits, sessions, and static response headers.
 - Mounted applications, host routing, static files, buffered and adapter-backed request body streaming, lifespan hooks, background tasks, and exception handlers.
 

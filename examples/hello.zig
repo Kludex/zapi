@@ -24,7 +24,7 @@ pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
 
-    var app = zapi.App.init(gpa.allocator(), .{
+    var app = zapi.ZAPI.init(gpa.allocator(), .{
         .title = "Hello Zapi",
         .version = "0.1.0",
     });

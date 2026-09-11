@@ -2,11 +2,25 @@
 //! Protocol values and independent codecs live in leaf modules.
 
 const std = @import("std");
-const builtin_mod = @import("builtin");
+const authentication = @import("authentication.zig");
+const background = @import("background.zig");
+const content_types = @import("content_types.zig");
+const cookies_mod = @import("cookies.zig");
+const datastructures = @import("datastructures.zig");
+const docs_ui = @import("docs_ui.zig");
+const headers_mod = @import("headers.zig");
 const http = @import("http.zig");
+const middleware_options = @import("middleware/options.zig");
+const requests = @import("requests.zig");
+const responses = @import("responses.zig");
+const routing = @import("routing.zig");
+const sessions = @import("sessions.zig");
+const static_files_mod = @import("static_files/core.zig");
 const scalar = @import("scalar.zig");
 const sse = @import("sse.zig");
 const template_mod = @import("template.zig");
+const urls = @import("urls.zig");
+const websockets = @import("websockets.zig");
 const testing = std.testing;
 
 /// An HTTP request method supported by zapi.
@@ -19,19 +33,28 @@ pub const HeaderField = http.HeaderField;
 const validateHeader = http.validateHeader;
 
 test {
+    _ = authentication;
+    _ = background;
+    _ = content_types;
+    _ = cookies_mod;
+    _ = datastructures;
+    _ = docs_ui;
+    _ = headers_mod;
     _ = http;
+    _ = middleware_options;
+    _ = requests;
+    _ = responses;
+    _ = routing;
+    _ = sessions;
+    _ = static_files_mod;
     _ = scalar;
     _ = sse;
     _ = template_mod;
+    _ = urls;
+    _ = websockets;
 }
 
-fn ownedHeaderField(allocator: std.mem.Allocator, name: []const u8, value: []const u8) !HeaderField {
-    try validateHeader(name, value);
-    const owned_name = try allocator.dupe(u8, name);
-    errdefer allocator.free(owned_name);
-    const owned_value = try allocator.dupe(u8, value);
-    return .{ .name = owned_name, .value = owned_value };
-}
+const ownedHeaderField = headers_mod.owned;
 
 fn ownedRedirectLocationHeader(allocator: std.mem.Allocator, location: []const u8) !HeaderField {
     const owned_name = try allocator.dupe(u8, "location");
@@ -40,40 +63,13 @@ fn ownedRedirectLocationHeader(allocator: std.mem.Allocator, location: []const u
     return .{ .name = owned_name, .value = owned_value };
 }
 
-fn freeHeaderItemsAndSlice(allocator: std.mem.Allocator, headers: []HeaderField, written: usize) void {
-    for (headers[0..written]) |header| {
-        allocator.free(header.name);
-        allocator.free(header.value);
-    }
-    allocator.free(headers);
-}
+const freeHeaderItemsAndSlice = headers_mod.freeItemsAndSlice;
+const appendOwnedHeader = headers_mod.appendOwned;
 
-fn appendOwnedHeader(
-    allocator: std.mem.Allocator,
-    headers: *std.ArrayList(HeaderField),
-    name: []const u8,
-    value: []const u8,
-) !void {
-    const header = try ownedHeaderField(allocator, name, value);
-    errdefer {
-        allocator.free(header.name);
-        allocator.free(header.value);
-    }
-    try headers.append(allocator, header);
-}
-
-pub const UploadFile = struct {
-    filename: []const u8,
-    content_type: []const u8 = "application/octet-stream",
-    content: []const u8,
-};
-
-pub const MultipartFileField = struct {
-    name: []const u8,
-    filename: []const u8,
-    content_type: []const u8 = "application/octet-stream",
-    content: []const u8,
-};
+/// One uploaded file.
+pub const UploadFile = datastructures.UploadFile;
+/// One named multipart upload.
+pub const MultipartFileField = datastructures.MultipartFileField;
 
 /// A canonical textual UUID.
 pub const Uuid = scalar.Uuid;
@@ -86,211 +82,44 @@ pub const Email = scalar.Email;
 /// A validated URI.
 pub const Url = scalar.Url;
 
-pub const BearerAuth = struct {
-    token: []const u8,
-};
+/// Bearer credentials.
+pub const BearerAuth = authentication.BearerAuth;
+/// One OAuth2 scope.
+pub const OAuth2Scope = authentication.OAuth2Scope;
+/// OAuth2 password bearer credentials.
+pub const OAuth2PasswordBearer = authentication.OAuth2PasswordBearer;
+/// OAuth2 authorization code bearer credentials.
+pub const OAuth2AuthorizationCodeBearer = authentication.OAuth2AuthorizationCodeBearer;
+/// OAuth2 client credentials bearer credentials.
+pub const OAuth2ClientCredentialsBearer = authentication.OAuth2ClientCredentialsBearer;
+/// OAuth2 implicit bearer credentials.
+pub const OAuth2ImplicitBearer = authentication.OAuth2ImplicitBearer;
+/// Basic authentication credentials.
+pub const BasicAuth = authentication.BasicAuth;
+/// An API key request location.
+pub const ApiKeyLocation = authentication.ApiKeyLocation;
+/// A header API key credential type.
+pub const ApiKeyHeader = authentication.ApiKeyHeader;
+/// A query API key credential type.
+pub const ApiKeyQuery = authentication.ApiKeyQuery;
+/// A cookie API key credential type.
+pub const ApiKeyCookie = authentication.ApiKeyCookie;
 
-pub const OAuth2Scope = struct {
-    name: []const u8,
-    description: []const u8 = "",
-};
+/// A background callback.
+pub const BackgroundTaskFn = background.BackgroundTaskFn;
+/// One background task.
+pub const BackgroundTask = background.BackgroundTask;
+/// An owned background task collection.
+pub const BackgroundTasks = background.BackgroundTasks;
+/// A remote request address.
+pub const ClientAddress = datastructures.ClientAddress;
 
-pub fn OAuth2PasswordBearer(comptime options: anytype) type {
-    return struct {
-        pub const zapi_oauth2_password_bearer = true;
-        pub const zapi_scheme_name = if (@hasField(@TypeOf(options), "scheme_name")) options.scheme_name else "OAuth2PasswordBearer";
-        pub const zapi_token_url = options.token_url;
-        pub const zapi_scopes = if (@hasField(@TypeOf(options), "scopes")) options.scopes else &[_]OAuth2Scope{};
-
-        token: []const u8,
-    };
-}
-
-pub fn OAuth2AuthorizationCodeBearer(comptime options: anytype) type {
-    return struct {
-        pub const zapi_oauth2_authorization_code_bearer = true;
-        pub const zapi_scheme_name = if (@hasField(@TypeOf(options), "scheme_name")) options.scheme_name else "OAuth2AuthorizationCodeBearer";
-        pub const zapi_authorization_url = options.authorization_url;
-        pub const zapi_token_url = options.token_url;
-        pub const zapi_scopes = if (@hasField(@TypeOf(options), "scopes")) options.scopes else &[_]OAuth2Scope{};
-
-        token: []const u8,
-    };
-}
-
-pub fn OAuth2ClientCredentialsBearer(comptime options: anytype) type {
-    return struct {
-        pub const zapi_oauth2_client_credentials_bearer = true;
-        pub const zapi_scheme_name = if (@hasField(@TypeOf(options), "scheme_name")) options.scheme_name else "OAuth2ClientCredentialsBearer";
-        pub const zapi_token_url = options.token_url;
-        pub const zapi_scopes = if (@hasField(@TypeOf(options), "scopes")) options.scopes else &[_]OAuth2Scope{};
-
-        token: []const u8,
-    };
-}
-
-pub fn OAuth2ImplicitBearer(comptime options: anytype) type {
-    return struct {
-        pub const zapi_oauth2_implicit_bearer = true;
-        pub const zapi_scheme_name = if (@hasField(@TypeOf(options), "scheme_name")) options.scheme_name else "OAuth2ImplicitBearer";
-        pub const zapi_authorization_url = options.authorization_url;
-        pub const zapi_scopes = if (@hasField(@TypeOf(options), "scopes")) options.scopes else &[_]OAuth2Scope{};
-
-        token: []const u8,
-    };
-}
-
-pub const BasicAuth = struct {
-    username: []const u8,
-    password: []const u8,
-    arena: ?std.heap.ArenaAllocator = null,
-
-    pub fn deinit(self: *BasicAuth) void {
-        if (self.arena) |*arena| arena.deinit();
-    }
-};
-
-pub const ApiKeyLocation = enum {
-    header,
-    query,
-    cookie,
-
-    fn openapiText(self: ApiKeyLocation) []const u8 {
-        return switch (self) {
-            .header => "header",
-            .query => "query",
-            .cookie => "cookie",
-        };
-    }
-};
-
-pub fn ApiKeyHeader(comptime name: []const u8) type {
-    return ApiKey(.header, name);
-}
-
-pub fn ApiKeyQuery(comptime name: []const u8) type {
-    return ApiKey(.query, name);
-}
-
-pub fn ApiKeyCookie(comptime name: []const u8) type {
-    return ApiKey(.cookie, name);
-}
-
-fn ApiKey(comptime location: ApiKeyLocation, comptime name: []const u8) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_api_key_location = location;
-        pub const zapi_api_key_name = name;
-
-        key: []const u8,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-pub const BackgroundTaskFn = *const fn (?*anyopaque) anyerror!void;
-
-pub const BackgroundTask = struct {
-    run: BackgroundTaskFn,
-    context: ?*anyopaque = null,
-};
-
-pub const BackgroundTasks = struct {
-    allocator: std.mem.Allocator,
-    tasks: std.ArrayList(BackgroundTask) = .empty,
-
-    pub fn init(allocator: std.mem.Allocator) BackgroundTasks {
-        return .{ .allocator = allocator };
-    }
-
-    pub fn deinit(self: *BackgroundTasks) void {
-        self.tasks.deinit(self.allocator);
-    }
-
-    pub fn addTask(self: *BackgroundTasks, run: BackgroundTaskFn, context: ?*anyopaque) !void {
-        try self.tasks.append(self.allocator, .{
-            .run = run,
-            .context = context,
-        });
-    }
-
-    pub fn append(self: *BackgroundTasks, task: BackgroundTask) !void {
-        try self.tasks.append(self.allocator, task);
-    }
-
-    pub fn len(self: BackgroundTasks) usize {
-        return self.tasks.items.len;
-    }
-
-    pub fn isEmpty(self: BackgroundTasks) bool {
-        return self.tasks.items.len == 0;
-    }
-
-    pub fn items(self: BackgroundTasks) []const BackgroundTask {
-        return self.tasks.items;
-    }
-
-    pub fn toOwnedSlice(self: *BackgroundTasks) ![]const BackgroundTask {
-        const owned = try self.tasks.toOwnedSlice(self.allocator);
-        self.tasks = .empty;
-        return owned;
-    }
-};
-
-pub const ClientAddress = struct {
-    host: []const u8,
-    port: u16,
-};
-
-pub const BodyStreamOptions = struct {
-    chunk_size: usize = 16 * 1024,
-};
-
-pub const BodyStream = struct {
-    body: []const u8,
-    chunk_size: usize,
-    index: usize = 0,
-
-    pub fn next(self: *BodyStream) ?[]const u8 {
-        if (self.index >= self.body.len) return null;
-        const remaining = self.body.len - self.index;
-        const chunk_len = if (self.chunk_size == 0) remaining else @min(self.chunk_size, remaining);
-        const end = self.index + chunk_len;
-        const chunk = self.body[self.index..end];
-        self.index = end;
-        return chunk;
-    }
-
-    pub fn reset(self: *BodyStream) void {
-        self.index = 0;
-    }
-};
-
-pub const RequestBodyReader = struct {
-    reader: *std.Io.Reader,
-    max_size: ?usize = null,
-    bytes_read: usize = 0,
-
-    pub fn read(self: *RequestBodyReader, buffer: []u8) !usize {
-        const n = try self.reader.readSliceShort(buffer);
-        if (self.max_size) |max_size| {
-            if (n > max_size or self.bytes_read > max_size - n) return error.RequestBodyTooLarge;
-        }
-        self.bytes_read += n;
-        return n;
-    }
-
-    pub fn discardRemaining(self: *RequestBodyReader) !void {
-        var buffer: [8192]u8 = undefined;
-        while (true) {
-            const n = try self.read(&buffer);
-            if (n == 0) return;
-        }
-    }
-};
+/// Buffered request streaming options.
+pub const BodyStreamOptions = requests.BodyStreamOptions;
+/// An iterator over buffered request body chunks.
+pub const BodyStream = requests.BodyStream;
+/// A bounded reader for transport request bodies.
+pub const RequestBodyReader = requests.RequestBodyReader;
 
 pub const Request = struct {
     method: Method,
@@ -306,7 +135,7 @@ pub const Request = struct {
     body_reader: ?*RequestBodyReader = null,
     state_ptr: ?*anyopaque = null,
     session_ptr: ?*Session = null,
-    url_app: ?*App = null,
+    url_resolver: ?requests.URLResolver = null,
     url_root_path: ?[]const u8 = null,
     inherited_io: ?std.Io = null,
 
@@ -585,9 +414,9 @@ pub const Request = struct {
     }
 
     pub fn urlPathFor(self: Request, allocator: std.mem.Allocator, name: []const u8, params: anytype) anyerror![]u8 {
-        const url_app = self.url_app orelse return error.NoRoute;
-        const path = try url_app.urlPathFor(name, params);
-        defer url_app.allocator.free(path);
+        const resolver = self.url_resolver orelse return error.NoRoute;
+        const path = try resolver.pathFor(allocator, name, params);
+        defer allocator.free(path);
 
         const root_path = self.url_root_path orelse self.root_path;
         if (root_path.len == 0) return allocator.dupe(u8, path);
@@ -755,23 +584,23 @@ pub const RequestBuilder = struct {
         return self.value;
     }
 
-    pub fn send(self: *RequestBuilder, app: *App) !Response {
+    pub fn send(self: *RequestBuilder, app: *ZAPI) !Response {
         return app.handle(self.request());
     }
 
-    pub fn sendOrRaise(self: *RequestBuilder, app: *App) !Response {
+    pub fn sendOrRaise(self: *RequestBuilder, app: *ZAPI) !Response {
         return app.handleOrRaise(self.request());
     }
 
-    pub fn sendFollowRedirects(self: *RequestBuilder, app: *App, options: FollowRedirectOptions) !Response {
+    pub fn sendFollowRedirects(self: *RequestBuilder, app: *ZAPI, options: FollowRedirectOptions) !Response {
         return self.sendFollowRedirectsMode(app, options, false);
     }
 
-    pub fn sendFollowRedirectsOrRaise(self: *RequestBuilder, app: *App, options: FollowRedirectOptions) !Response {
+    pub fn sendFollowRedirectsOrRaise(self: *RequestBuilder, app: *ZAPI, options: FollowRedirectOptions) !Response {
         return self.sendFollowRedirectsMode(app, options, true);
     }
 
-    fn sendFollowRedirectsMode(self: *RequestBuilder, app: *App, options: FollowRedirectOptions, raise_server_errors: bool) !Response {
+    fn sendFollowRedirectsMode(self: *RequestBuilder, app: *ZAPI, options: FollowRedirectOptions, raise_server_errors: bool) !Response {
         var current = self.request();
         const base_headers = current.headers;
         var owned_target: ?[]u8 = null;
@@ -1224,14 +1053,14 @@ pub const RequestBuilder = struct {
 
 pub const TestClient = struct {
     allocator: std.mem.Allocator,
-    app: *App,
+    app: *ZAPI,
     client_options: TestClientOptions,
     default_headers: std.ArrayList(HeaderField) = .empty,
     default_query_params: std.ArrayList(HeaderField) = .empty,
     cookie_jar: CookieJar,
     started: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, app: *App, client_options: TestClientOptions) TestClient {
+    pub fn init(allocator: std.mem.Allocator, app: *ZAPI, client_options: TestClientOptions) TestClient {
         return .{
             .allocator = allocator,
             .app = app,
@@ -1240,7 +1069,7 @@ pub const TestClient = struct {
         };
     }
 
-    pub fn start(allocator: std.mem.Allocator, app: *App, client_options: TestClientOptions) !TestClient {
+    pub fn start(allocator: std.mem.Allocator, app: *ZAPI, client_options: TestClientOptions) !TestClient {
         var client = TestClient.init(allocator, app, client_options);
         errdefer client.deinit();
         try app.startup();
@@ -2168,6 +1997,27 @@ fn parseWebSocketServerMessage(allocator: std.mem.Allocator, body: []const u8) !
     };
 }
 
+const ParsedSetCookie = cookies_mod.ParsedSetCookie;
+const parseSetCookiePair = cookies_mod.parseSetCookiePair;
+const parseSetCookieInto = cookies_mod.parseSetCookieInto;
+const setCookieAttribute = cookies_mod.setCookieAttribute;
+const setCookieAttributePresent = cookies_mod.setCookieAttributePresent;
+const setCookieDeletes = cookies_mod.setCookieDeletes;
+const cookieExpiresInPast = cookies_mod.cookieExpiresInPast;
+const optionalEql = cookies_mod.optionalEql;
+const normalizeCookieDomain = cookies_mod.normalizeCookieDomain;
+const cookieHostName = cookies_mod.cookieHostName;
+const defaultCookiePath = cookies_mod.defaultCookiePath;
+const cookieEntryMatches = cookies_mod.cookieEntryMatches;
+const cookieDomainMatches = cookies_mod.cookieDomainMatches;
+const cookieDomainMatchesRequestHost = cookies_mod.cookieDomainMatchesRequestHost;
+const cookiePathMatches = cookies_mod.cookiePathMatches;
+pub const makeSetCookieHeader = cookies_mod.makeSetCookieHeader;
+pub const makeDeleteCookieHeader = cookies_mod.makeDeleteCookieHeader;
+const validateCookieToken = cookies_mod.validateCookieToken;
+const validateCookieValue = cookies_mod.validateCookieValue;
+const validateCookieAttributeValue = cookies_mod.validateCookieAttributeValue;
+
 const CookieJarEntry = struct {
     name: []u8,
     value: []u8,
@@ -2385,155 +2235,6 @@ fn cookiePathSpecificity(entry: CookieJarEntry) usize {
     return path.len;
 }
 
-const ParsedSetCookie = struct {
-    name: []const u8,
-    value: []const u8,
-    pair_end: usize,
-};
-
-fn parseSetCookiePair(header_value: []const u8) ?ParsedSetCookie {
-    const pair_end = std.mem.indexOfScalar(u8, header_value, ';') orelse header_value.len;
-    const pair = std.mem.trim(u8, header_value[0..pair_end], " \t");
-    const eq_idx = std.mem.indexOfScalar(u8, pair, '=') orelse return null;
-    const name = std.mem.trim(u8, pair[0..eq_idx], " \t");
-    const value = std.mem.trim(u8, pair[eq_idx + 1 ..], " \t");
-    if (name.len == 0) return null;
-    return .{
-        .name = name,
-        .value = value,
-        .pair_end = pair_end,
-    };
-}
-
-fn parseSetCookieInto(header_value: []const u8, params: *CookieParams) !void {
-    const parsed = parseSetCookiePair(header_value) orelse return;
-    if (setCookieDeletes(header_value[parsed.pair_end..])) {
-        params.remove(parsed.name);
-        return;
-    }
-    try params.put(parsed.name, parsed.value);
-}
-
-fn setCookieAttribute(attributes: []const u8, name: []const u8) ?[]const u8 {
-    var it = std.mem.splitScalar(u8, attributes, ';');
-    while (it.next()) |raw_attribute| {
-        const attribute = std.mem.trim(u8, raw_attribute, " \t");
-        if (attribute.len == 0) continue;
-        const eq_idx = std.mem.indexOfScalar(u8, attribute, '=') orelse continue;
-        const attribute_name = std.mem.trim(u8, attribute[0..eq_idx], " \t");
-        if (!std.ascii.eqlIgnoreCase(attribute_name, name)) continue;
-        return std.mem.trim(u8, attribute[eq_idx + 1 ..], " \t");
-    }
-    return null;
-}
-
-fn setCookieAttributePresent(attributes: []const u8, name: []const u8) bool {
-    var it = std.mem.splitScalar(u8, attributes, ';');
-    while (it.next()) |raw_attribute| {
-        const attribute = std.mem.trim(u8, raw_attribute, " \t");
-        if (attribute.len == 0) continue;
-        const attribute_name = if (std.mem.indexOfScalar(u8, attribute, '=')) |eq_idx|
-            std.mem.trim(u8, attribute[0..eq_idx], " \t")
-        else
-            attribute;
-        if (std.ascii.eqlIgnoreCase(attribute_name, name)) return true;
-    }
-    return false;
-}
-
-fn setCookieDeletes(attributes: []const u8) bool {
-    if (setCookieAttribute(attributes, "max-age")) |raw_max_age| {
-        const value = std.fmt.parseInt(i64, raw_max_age, 10) catch return false;
-        return value <= 0;
-    }
-
-    if (setCookieAttribute(attributes, "expires")) |raw_expires| {
-        return cookieExpiresInPast(raw_expires);
-    }
-
-    return false;
-}
-
-fn cookieExpiresInPast(raw_expires: []const u8) bool {
-    const expires = std.mem.trim(u8, raw_expires, " \t");
-    if (parseHttpDate(expires)) |seconds| {
-        return seconds <= 0;
-    }
-
-    if (expires.len == 29) {
-        const year = std.fmt.parseInt(i64, expires[12..16], 10) catch return false;
-        if (year < std.time.epoch.epoch_year) return true;
-    }
-
-    return false;
-}
-
-fn optionalEql(a: ?[]const u8, b: ?[]const u8) bool {
-    if (a == null and b == null) return true;
-    if (a == null or b == null) return false;
-    return std.mem.eql(u8, a.?, b.?);
-}
-
-fn normalizeCookieDomain(domain: []const u8) []const u8 {
-    var trimmed = std.mem.trim(u8, domain, " \t");
-    while (trimmed.len > 0 and trimmed[0] == '.') trimmed = trimmed[1..];
-    return cookieHostName(trimmed);
-}
-
-fn cookieHostName(host: []const u8) []const u8 {
-    return trustedHostName(host);
-}
-
-fn defaultCookiePath(request_path: []const u8) []const u8 {
-    if (request_path.len == 0 or request_path[0] != '/') return "/";
-    const last_slash = std.mem.lastIndexOfScalar(u8, request_path, '/') orelse return "/";
-    if (last_slash == 0) return "/";
-    return request_path[0..last_slash];
-}
-
-fn cookieEntryMatches(entry: CookieJarEntry, host: ?[]const u8, path: []const u8, scheme: []const u8) bool {
-    if (entry.secure and !std.ascii.eqlIgnoreCase(scheme, "https")) return false;
-
-    if (entry.domain) |domain| {
-        const request_host = host orelse return false;
-        const normalized_host = cookieHostName(request_host);
-        if (entry.host_only) {
-            if (!std.ascii.eqlIgnoreCase(normalized_host, domain)) return false;
-        } else if (!cookieDomainMatchesRequestHost(normalized_host, domain)) {
-            return false;
-        }
-    }
-
-    if (entry.path) |cookie_path| {
-        if (!cookiePathMatches(path, cookie_path)) return false;
-    }
-
-    return true;
-}
-
-fn cookieDomainMatches(host: []const u8, domain: []const u8) bool {
-    if (std.ascii.eqlIgnoreCase(host, domain)) return true;
-    if (host.len <= domain.len) return false;
-    if (host[host.len - domain.len - 1] != '.') return false;
-    return std.ascii.endsWithIgnoreCase(host, domain);
-}
-
-fn cookieDomainMatchesRequestHost(host: []const u8, domain: []const u8) bool {
-    if (cookieDomainMatches(host, domain)) return true;
-    if (std.mem.indexOfScalar(u8, host, '.') != null) return false;
-    if (!std.ascii.endsWithIgnoreCase(domain, ".local")) return false;
-    if (domain.len != host.len + ".local".len) return false;
-    return std.ascii.eqlIgnoreCase(domain[0..host.len], host);
-}
-
-fn cookiePathMatches(request_path: []const u8, cookie_path: []const u8) bool {
-    if (cookie_path.len == 0 or std.mem.eql(u8, cookie_path, "/")) return true;
-    if (!std.mem.startsWith(u8, request_path, cookie_path)) return false;
-    if (request_path.len == cookie_path.len) return true;
-    if (cookie_path[cookie_path.len - 1] == '/') return true;
-    return request_path[cookie_path.len] == '/';
-}
-
 fn buildClientHeaders(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(HeaderField),
@@ -2686,13 +2387,7 @@ fn removeOwnedFields(allocator: std.mem.Allocator, fields: *std.ArrayList(Header
     fields.items = fields.items[0..write];
 }
 
-fn clearOwnedHeaderList(allocator: std.mem.Allocator, headers: *std.ArrayList(HeaderField)) void {
-    for (headers.items) |header_item| {
-        allocator.free(header_item.name);
-        allocator.free(header_item.value);
-    }
-    headers.clearRetainingCapacity();
-}
+const clearOwnedHeaderList = headers_mod.clearOwned;
 
 fn redirectStatus(status: Status) bool {
     return status == .moved_permanently or
@@ -2716,108 +2411,10 @@ fn redirectMethod(method: Method, status: Status) Method {
     };
 }
 
-const RedirectTarget = struct {
-    path: []u8,
-    scheme: ?[]const u8 = null,
-    host: ?[]const u8 = null,
-};
-
-fn redirectTarget(allocator: std.mem.Allocator, request: Request, location: []const u8) !RedirectTarget {
-    if (std.mem.startsWith(u8, location, "http://") or std.mem.startsWith(u8, location, "https://")) {
-        const scheme_end = std.mem.indexOf(u8, location, "://").?;
-        const after_scheme = scheme_end + 3;
-        const path_start = std.mem.indexOfAnyPos(u8, location, after_scheme, "/?") orelse location.len;
-        const scheme = location[0..scheme_end];
-        const host = location[after_scheme..path_start];
-        if (host.len == 0) return error.InvalidUrl;
-
-        const path = if (path_start == location.len)
-            try allocator.dupe(u8, "/")
-        else if (location[path_start] == '?')
-            try std.fmt.allocPrint(allocator, "/{s}", .{location[path_start..]})
-        else
-            try normalizeRedirectTarget(allocator, location[path_start..]);
-        return .{ .path = path, .scheme = scheme, .host = host };
-    }
-
-    if (std.mem.startsWith(u8, location, "//")) {
-        const after_authority = 2;
-        const path_start = std.mem.indexOfAnyPos(u8, location, after_authority, "/?") orelse location.len;
-        const host = location[after_authority..path_start];
-        if (host.len == 0) return error.InvalidUrl;
-
-        const path = if (path_start == location.len)
-            try allocator.dupe(u8, "/")
-        else if (location[path_start] == '?')
-            try std.fmt.allocPrint(allocator, "/{s}", .{location[path_start..]})
-        else
-            try normalizeRedirectTarget(allocator, location[path_start..]);
-        return .{ .path = path, .host = host };
-    }
-
-    if (std.mem.startsWith(u8, location, "/")) return .{ .path = try normalizeRedirectTarget(allocator, location) };
-    if (std.mem.startsWith(u8, location, "?")) return .{ .path = try std.fmt.allocPrint(allocator, "{s}{s}", .{ request.path, location }) };
-
-    const slash = std.mem.lastIndexOfScalar(u8, request.path, '/') orelse {
-        const target = try std.fmt.allocPrint(allocator, "/{s}", .{location});
-        defer allocator.free(target);
-        return .{ .path = try normalizeRedirectTarget(allocator, target) };
-    };
-    const target = try std.fmt.allocPrint(allocator, "{s}{s}", .{ request.path[0 .. slash + 1], location });
-    defer allocator.free(target);
-    return .{ .path = try normalizeRedirectTarget(allocator, target) };
-}
-
-fn normalizeRedirectTarget(allocator: std.mem.Allocator, target: []const u8) ![]u8 {
-    const query_start = std.mem.indexOfScalar(u8, target, '?') orelse target.len;
-    const path = target[0..query_start];
-    const query = target[query_start..];
-
-    var segments: std.ArrayList([]const u8) = .empty;
-    defer segments.deinit(allocator);
-
-    var it = std.mem.splitScalar(u8, path, '/');
-    while (it.next()) |segment| {
-        if (segment.len == 0 or std.mem.eql(u8, segment, ".")) continue;
-        if (std.mem.eql(u8, segment, "..")) {
-            if (segments.items.len > 0) _ = segments.pop();
-            continue;
-        }
-        try segments.append(allocator, segment);
-    }
-
-    const trailing_slash = path.len > 1 and path[path.len - 1] == '/';
-    var out = std.Io.Writer.Allocating.init(allocator);
-    errdefer out.deinit();
-
-    try out.writer.writeByte('/');
-    for (segments.items, 0..) |segment, index| {
-        if (index != 0) try out.writer.writeByte('/');
-        try out.writer.writeAll(segment);
-    }
-    if (trailing_slash and segments.items.len > 0) try out.writer.writeByte('/');
-    try out.writer.writeAll(query);
-    return out.toOwnedSlice();
-}
-
-fn redirectNextUrl(allocator: std.mem.Allocator, base_url: []const u8, location: []const u8) ![]u8 {
-    var base_request = Request.init(.GET, base_url);
-    var host_header: [1]HeaderField = undefined;
-    if (try absoluteTargetForRequest(base_request)) |absolute_target| {
-        base_request.scheme = absolute_target.scheme;
-        base_request.path = absolute_target.path;
-        base_request.query = absolute_target.query;
-        host_header[0] = .{ .name = "host", .value = absolute_target.host };
-        base_request.headers = host_header[0..];
-    }
-
-    const target = try redirectTarget(allocator, base_request, location);
-    defer allocator.free(target.path);
-
-    const host = target.host orelse base_request.header("host") orelse return allocator.dupe(u8, target.path);
-    const scheme = target.scheme orelse base_request.scheme;
-    return std.fmt.allocPrint(allocator, "{s}://{s}{s}", .{ scheme, host, target.path });
-}
+const RedirectTarget = urls.RedirectTarget;
+const redirectTarget = urls.redirectTarget;
+const normalizeRedirectTarget = urls.normalizeRedirectTarget;
+const redirectNextUrl = urls.redirectNextUrl;
 
 fn appendMultipartDisposition(out: *std.ArrayList(u8), allocator: std.mem.Allocator, name: []const u8, filename: ?[]const u8) !void {
     try validateMultipartDispositionValue(name);
@@ -2837,371 +2434,18 @@ fn validateMultipartDispositionValue(value: []const u8) !void {
     if (value.len == 0 or std.mem.indexOfAny(u8, value, "\"\r\n") != null) return error.InvalidHeader;
 }
 
-/// An owned response allocated by the app that produced it.
-pub const Response = struct {
-    status: Status,
-    headers: std.ArrayList(HeaderField),
-    body: std.ArrayList(u8),
-    background_tasks: std.ArrayList(BackgroundTask),
-    history: std.ArrayList(Response),
-    url: ?[]u8 = null,
-    stream: ?ResponseStream = null,
+/// An owned HTTP response.
+pub const Response = responses.Response;
 
-    /// Creates an empty response without allocating.
-    pub fn init(status: Status) Response {
-        return .{
-            .status = status,
-            .headers = .empty,
-            .body = .empty,
-            .background_tasks = .empty,
-            .history = .empty,
-        };
-    }
-
-    /// Releases the response with the allocator passed to the originating app.
-    pub fn deinit(self: *Response, allocator: std.mem.Allocator) void {
-        for (self.history.items) |*response| {
-            response.deinit(allocator);
-        }
-        self.history.deinit(allocator);
-        if (self.url) |url| allocator.free(url);
-        for (self.headers.items) |item| {
-            allocator.free(item.name);
-            allocator.free(item.value);
-        }
-        self.headers.deinit(allocator);
-        self.body.deinit(allocator);
-        self.background_tasks.deinit(allocator);
-    }
-
-    pub fn setHeader(self: *Response, allocator: std.mem.Allocator, name: []const u8, value: []const u8) !void {
-        try validateHeader(name, value);
-        var i: usize = 0;
-        while (i < self.headers.items.len) {
-            if (std.ascii.eqlIgnoreCase(self.headers.items[i].name, name)) {
-                allocator.free(self.headers.items[i].name);
-                allocator.free(self.headers.items[i].value);
-                const removed = self.headers.orderedRemove(i);
-                _ = removed;
-            } else {
-                i += 1;
-            }
-        }
-
-        try self.appendHeader(allocator, name, value);
-    }
-
-    pub fn removeHeader(self: *Response, allocator: std.mem.Allocator, name: []const u8) void {
-        var i: usize = 0;
-        while (i < self.headers.items.len) {
-            if (std.ascii.eqlIgnoreCase(self.headers.items[i].name, name)) {
-                allocator.free(self.headers.items[i].name);
-                allocator.free(self.headers.items[i].value);
-                const removed = self.headers.orderedRemove(i);
-                _ = removed;
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    pub fn clearHeaders(self: *Response, allocator: std.mem.Allocator) void {
-        clearOwnedHeaderList(allocator, &self.headers);
-    }
-
-    pub fn appendHeader(self: *Response, allocator: std.mem.Allocator, name: []const u8, value: []const u8) !void {
-        try validateHeader(name, value);
-        const owned_name = try allocator.dupe(u8, name);
-        errdefer allocator.free(owned_name);
-        const owned_value = try allocator.dupe(u8, value);
-        try self.headers.append(allocator, .{
-            .name = owned_name,
-            .value = owned_value,
-        });
-    }
-
-    pub fn setCookie(self: *Response, allocator: std.mem.Allocator, name: []const u8, value: []const u8, options: CookieOptions) !void {
-        const cookie_header = try makeSetCookieHeader(allocator, name, value, options);
-        errdefer {
-            allocator.free(cookie_header.name);
-            allocator.free(cookie_header.value);
-        }
-        try self.headers.append(allocator, cookie_header);
-    }
-
-    pub fn deleteCookie(self: *Response, allocator: std.mem.Allocator, name: []const u8, options: CookieOptions) !void {
-        const cookie_header = try makeDeleteCookieHeader(allocator, name, options);
-        errdefer {
-            allocator.free(cookie_header.name);
-            allocator.free(cookie_header.value);
-        }
-        try self.headers.append(allocator, cookie_header);
-    }
-
-    pub fn header(self: Response, name: []const u8) ?[]const u8 {
-        for (self.headers.items) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) return item.value;
-        }
-        return null;
-    }
-
-    pub fn hasHeader(self: Response, name: []const u8) bool {
-        return self.header(name) != null;
-    }
-
-    pub fn headerValues(self: Response, allocator: std.mem.Allocator, name: []const u8) ![]const []const u8 {
-        var count: usize = 0;
-        for (self.headers.items) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) count += 1;
-        }
-
-        const values = try allocator.alloc([]const u8, count);
-        var index: usize = 0;
-        for (self.headers.items) |item| {
-            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
-            values[index] = item.value;
-            index += 1;
-        }
-        return values;
-    }
-
-    pub fn reason(self: Response) []const u8 {
-        return self.status.reason();
-    }
-
-    pub fn statusCode(self: Response) u16 {
-        return self.status.code();
-    }
-
-    pub fn isInformational(self: Response) bool {
-        return self.status.isInformational();
-    }
-
-    pub fn isSuccess(self: Response) bool {
-        return self.status.isSuccess();
-    }
-
-    pub fn isRedirect(self: Response) bool {
-        return self.status.isRedirect();
-    }
-
-    pub fn isClientError(self: Response) bool {
-        return self.status.isClientError();
-    }
-
-    pub fn isServerError(self: Response) bool {
-        return self.status.isServerError();
-    }
-
-    pub fn isError(self: Response) bool {
-        return self.status.isError();
-    }
-
-    pub fn expectStatus(self: Response, expected: Status) !void {
-        if (self.status != expected) return error.UnexpectedStatus;
-    }
-
-    pub fn expectSuccess(self: Response) !void {
-        if (!self.isSuccess()) return error.UnexpectedStatus;
-    }
-
-    pub fn raiseForStatus(self: Response) !void {
-        if (self.isError()) return error.ResponseStatusError;
-    }
-
-    pub fn requestUrl(self: Response) ?[]const u8 {
-        return self.url;
-    }
-
-    pub fn location(self: Response) ?[]const u8 {
-        return self.header("location");
-    }
-
-    pub fn nextUrl(self: Response, allocator: std.mem.Allocator) !?[]u8 {
-        if (!self.isRedirect()) return null;
-        const location_value = self.location() orelse return null;
-        const request_url = self.requestUrl() orelse return null;
-        return try redirectNextUrl(allocator, request_url, location_value);
-    }
-
-    pub fn json(self: Response, comptime T: type, allocator: std.mem.Allocator) !std.json.Parsed(T) {
-        return std.json.parseFromSlice(T, allocator, self.body.items, .{});
-    }
-
-    pub fn contentType(self: Response) ?[]const u8 {
-        const value = self.header("content-type") orelse return null;
-        return mediaTypeOnly(value);
-    }
-
-    pub fn hasContentType(self: Response, expected: []const u8) bool {
-        const value = self.header("content-type") orelse return false;
-        return contentTypeMatches(value, expected);
-    }
-
-    pub fn text(self: Response) []const u8 {
-        return self.body.items;
-    }
-
-    pub fn bytes(self: Response) []const u8 {
-        return self.body.items;
-    }
-
-    pub fn content(self: Response) []const u8 {
-        return self.body.items;
-    }
-
-    pub fn cookies(self: Response, allocator: std.mem.Allocator) !CookieParams {
-        var params = CookieParams.init(allocator);
-        errdefer params.deinit();
-
-        for (self.headers.items) |header_item| {
-            if (!std.ascii.eqlIgnoreCase(header_item.name, "set-cookie")) continue;
-            try parseSetCookieInto(header_item.value, &params);
-        }
-
-        return params;
-    }
-
-    pub fn cookie(self: Response, allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
-        var params = try self.cookies(allocator);
-        defer params.deinit();
-        const value = params.get(name) orelse return null;
-        return try allocator.dupe(u8, value);
-    }
-
-    pub fn addBackgroundTask(self: *Response, allocator: std.mem.Allocator, task: BackgroundTask) !void {
-        try self.background_tasks.append(allocator, task);
-    }
-
-    pub fn collectStream(self: *Response, allocator: std.mem.Allocator) !void {
-        const stream = self.stream orelse return;
-        var aw = std.Io.Writer.Allocating.fromArrayList(allocator, &self.body);
-        errdefer aw.deinit();
-        try stream.write(stream.context, &aw.writer);
-        self.body = aw.toArrayList();
-        self.stream = null;
-    }
-
-    pub fn runBackgroundTasks(self: *Response) !void {
-        for (self.background_tasks.items) |task| {
-            try task.run(task.context);
-        }
-        self.background_tasks.clearRetainingCapacity();
-    }
-};
-
-pub const WebSocketTestMessage = struct {
-    opcode: std.http.Server.WebSocket.Opcode,
-    data: []u8,
-};
-
-pub const WebSocketTestFrame = struct {
-    opcode: std.http.Server.WebSocket.Opcode = .text,
-    data: []const u8,
-};
-
-pub const WebSocketTestResponse = struct {
-    status: Status,
-    headers: std.ArrayList(HeaderField),
-    message: ?WebSocketTestMessage = null,
-    messages: std.ArrayList(WebSocketTestMessage) = .empty,
-    raw_response: []u8,
-
-    pub fn deinit(self: *WebSocketTestResponse, allocator: std.mem.Allocator) void {
-        for (self.headers.items) |header_item| {
-            allocator.free(header_item.name);
-            allocator.free(header_item.value);
-        }
-        self.headers.deinit(allocator);
-        if (self.message) |message| allocator.free(message.data);
-        for (self.messages.items) |message| allocator.free(message.data);
-        self.messages.deinit(allocator);
-        allocator.free(self.raw_response);
-    }
-
-    pub fn header(self: WebSocketTestResponse, name: []const u8) ?[]const u8 {
-        for (self.headers.items) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) return item.value;
-        }
-        return null;
-    }
-
-    pub fn hasHeader(self: WebSocketTestResponse, name: []const u8) bool {
-        return self.header(name) != null;
-    }
-
-    pub fn headerValues(self: WebSocketTestResponse, allocator: std.mem.Allocator, name: []const u8) ![]const []const u8 {
-        var count: usize = 0;
-        for (self.headers.items) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) count += 1;
-        }
-
-        const values = try allocator.alloc([]const u8, count);
-        var index: usize = 0;
-        for (self.headers.items) |item| {
-            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
-            values[index] = item.value;
-            index += 1;
-        }
-        return values;
-    }
-
-    pub fn reason(self: WebSocketTestResponse) []const u8 {
-        return self.status.reason();
-    }
-
-    pub fn statusCode(self: WebSocketTestResponse) u16 {
-        return self.status.code();
-    }
-
-    pub fn expectStatus(self: WebSocketTestResponse, expected: Status) !void {
-        if (self.status != expected) return error.UnexpectedStatus;
-    }
-
-    pub fn text(self: WebSocketTestResponse) ?[]const u8 {
-        const first = self.message orelse return null;
-        if (first.opcode != .text) return null;
-        return first.data;
-    }
-
-    pub fn binary(self: WebSocketTestResponse) ?[]const u8 {
-        const first = self.message orelse return null;
-        if (first.opcode != .binary) return null;
-        return first.data;
-    }
-
-    pub fn json(self: WebSocketTestResponse, comptime T: type, allocator: std.mem.Allocator) !std.json.Parsed(T) {
-        const body = self.text() orelse return error.InvalidMessage;
-        return std.json.parseFromSlice(T, allocator, body, .{});
-    }
-
-    pub fn textMessages(self: WebSocketTestResponse, allocator: std.mem.Allocator) ![]const []const u8 {
-        return self.messageDataByOpcode(allocator, .text);
-    }
-
-    pub fn binaryMessages(self: WebSocketTestResponse, allocator: std.mem.Allocator) ![]const []const u8 {
-        return self.messageDataByOpcode(allocator, .binary);
-    }
-
-    fn messageDataByOpcode(self: WebSocketTestResponse, allocator: std.mem.Allocator, opcode: std.http.Server.WebSocket.Opcode) ![]const []const u8 {
-        var count: usize = 0;
-        for (self.messages.items) |item| {
-            if (item.opcode == opcode) count += 1;
-        }
-
-        const values = try allocator.alloc([]const u8, count);
-        var index: usize = 0;
-        for (self.messages.items) |item| {
-            if (item.opcode != opcode) continue;
-            values[index] = item.data;
-            index += 1;
-        }
-        return values;
-    }
-};
+/// One owned WebSocket message received by the test client.
+pub const WebSocketTestMessage = websockets.WebSocketTestMessage;
+/// One WebSocket frame sent by the test client.
+pub const WebSocketTestFrame = websockets.WebSocketTestFrame;
+/// An owned WebSocket test response.
+pub const WebSocketTestResponse = websockets.WebSocketTestResponse;
 
 pub const Context = struct {
-    app: *App,
+    app: *ZAPI,
     allocator: std.mem.Allocator,
     io: ?std.Io = null,
     request: Request,
@@ -3244,14 +2488,11 @@ pub const Context = struct {
     }
 
     pub fn urlPathFor(self: *Context, name: []const u8, params: anytype) anyerror![]u8 {
-        const url_app = self.request.url_app orelse self.app;
-        const path = try url_app.urlPathFor(name, params);
-        defer url_app.allocator.free(path);
+        const resolver = self.request.url_resolver orelse self.app.urlResolver();
+        const path = try resolver.pathFor(self.allocator, name, params);
+        defer self.allocator.free(path);
 
-        const root_path = if (url_app == self.app)
-            self.request.root_path
-        else
-            self.request.url_root_path orelse self.request.root_path;
+        const root_path = self.request.url_root_path orelse self.request.root_path;
         if (root_path.len == 0) return self.allocator.dupe(u8, path);
         return joinRequestPath(self.allocator, root_path, path);
     }
@@ -3338,7 +2579,7 @@ pub const Context = struct {
 };
 
 pub const WebSocketContext = struct {
-    app: *App,
+    app: *ZAPI,
     allocator: std.mem.Allocator,
     request: Request,
     path_params: std.StringHashMap([]const u8),
@@ -3380,197 +2621,59 @@ pub const WebSocketContext = struct {
     }
 };
 
-pub fn Body(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.body;
-        pub const zapi_inner = T;
+/// A typed JSON request body.
+pub const Body = requests.Body;
+/// Typed form data.
+pub const Form = requests.Form;
+/// Typed path parameters.
+pub const Path = requests.Path;
+/// Typed query parameters.
+pub const Query = requests.Query;
+/// Typed request headers.
+pub const Header = requests.Header;
+/// Typed request cookies.
+pub const Cookie = requests.Cookie;
 
-        value: T,
-        parsed: ?std.json.Parsed(T) = null,
+const WrapperKind = requests.WrapperKind;
 
-        pub fn deinit(self: *Self) void {
-            if (self.parsed) |*parsed| parsed.deinit();
-        }
-    };
-}
-
-pub fn Form(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.form;
-        pub const zapi_inner = T;
-
-        value: T,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-pub fn Path(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.path;
-        pub const zapi_inner = T;
-
-        value: T,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-pub fn Query(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.query;
-        pub const zapi_inner = T;
-
-        value: T,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-pub fn Header(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.header;
-        pub const zapi_inner = T;
-
-        value: T,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-pub fn Cookie(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        pub const zapi_wrapper = WrapperKind.cookie;
-        pub const zapi_inner = T;
-
-        value: T,
-        arena: ?std.heap.ArenaAllocator = null,
-
-        pub fn deinit(self: *Self) void {
-            if (self.arena) |*arena| arena.deinit();
-        }
-    };
-}
-
-const WrapperKind = enum { body, form, path, query, header, cookie };
-
-pub const Empty = struct {};
-
-pub const Text = struct {
-    text: []const u8,
-    status: ?Status = null,
-    headers: []const HeaderField = &.{},
-};
-
-pub const Html = struct {
-    html: []const u8,
-    status: ?Status = null,
-    headers: []const HeaderField = &.{},
-};
-
+/// An empty response body.
+pub const Empty = responses.Empty;
+/// A plain-text response.
+pub const Text = responses.Text;
+/// An HTML response.
+pub const Html = responses.Html;
 /// One named template value.
-pub const TemplateValue = template_mod.TemplateValue;
+pub const TemplateValue = responses.TemplateValue;
 /// Creates an HTML-escaped template value.
-pub const template = template_mod.template;
-/// Creates a trusted, unescaped HTML template value.
-pub const templateHtml = template_mod.templateHtml;
+pub const template = responses.template;
+/// Creates trusted, unescaped template HTML.
+pub const templateHtml = responses.templateHtml;
 /// A template response.
-pub const Template = template_mod.Template;
+pub const Template = responses.Template;
 /// One Server-Sent Event.
-pub const ServerSentEvent = sse.ServerSentEvent;
+pub const ServerSentEvent = responses.ServerSentEvent;
 /// Creates a data-only Server-Sent Event.
-pub const serverSentEvent = sse.serverSentEvent;
+pub const serverSentEvent = responses.serverSentEvent;
 /// A buffered Server-Sent Events response.
-pub const EventStream = sse.EventStream;
-
-pub const StreamingWriteFn = *const fn (?*anyopaque, *std.Io.Writer) anyerror!void;
-
-pub const ResponseStream = struct {
-    context: ?*anyopaque = null,
-    write: StreamingWriteFn,
-};
-
-/// A response written directly by the HTTP transport.
-pub const StreamingResponse = struct {
-    write: StreamingWriteFn,
-    /// Borrowed callback state that must remain valid until writing completes.
-    context: ?*anyopaque = null,
-    status: ?Status = null,
-    content_type: []const u8 = "application/octet-stream",
-    headers: []const HeaderField = &.{},
-};
-
-pub const Bytes = struct {
-    bytes: []const u8,
-    status: ?Status = null,
-    content_type: []const u8 = "application/octet-stream",
-    headers: []const HeaderField = &.{},
-};
-
-pub const ContentDisposition = enum {
-    attachment,
-    @"inline",
-
-    fn text(self: ContentDisposition) []const u8 {
-        return switch (self) {
-            .attachment => "attachment",
-            .@"inline" => "inline",
-        };
-    }
-};
-
-pub const File = struct {
-    path: []const u8,
-    status: ?Status = null,
-    dir: std.Io.Dir = .cwd(),
-    content_type: ?[]const u8 = null,
-    filename: ?[]const u8 = null,
-    content_disposition: ContentDisposition = .attachment,
-    headers: []const HeaderField = &.{},
-    background_tasks: []const BackgroundTask = &.{},
-    owned_background_tasks: bool = false,
-    max_size: std.Io.Limit = .limited(16 * 1024 * 1024),
-};
-
-pub fn Json(comptime T: type) type {
-    return struct {
-        pub const zapi_json_response = true;
-        pub const zapi_inner = T;
-
-        value: T,
-        status: ?Status = null,
-        headers: []const HeaderField = &.{},
-    };
-}
-
-pub const RawJson = struct {
-    json: []const u8,
-    status: ?Status = null,
-    headers: []const HeaderField = &.{},
-};
-
-pub const Redirect = struct {
-    location: []const u8,
-    status: Status = .temporary_redirect,
-};
+pub const EventStream = responses.EventStream;
+/// A streaming response writer.
+pub const StreamingWriteFn = responses.StreamingWriteFn;
+/// Transport state for a streaming response.
+pub const ResponseStream = responses.ResponseStream;
+/// A response written directly by the transport.
+pub const StreamingResponse = responses.StreamingResponse;
+/// An arbitrary byte response.
+pub const Bytes = responses.Bytes;
+/// A file content disposition.
+pub const ContentDisposition = responses.ContentDisposition;
+/// A file response.
+pub const File = responses.File;
+/// A typed JSON response.
+pub const Json = responses.Json;
+/// A pre-encoded JSON response.
+pub const RawJson = responses.RawJson;
+/// An HTTP redirect response.
+pub const Redirect = responses.Redirect;
 
 pub const RouteOptions = struct {
     name: ?[]const u8 = null,
@@ -3667,13 +2770,13 @@ pub const WebSocketRouteSpec = struct {
 
 pub const MountRouteSpec = struct {
     prefix: []const u8,
-    app: *App,
+    app: *ZAPI,
     name: ?[]const u8 = null,
 };
 
 pub const HostRouteSpec = struct {
     pattern: []const u8,
-    app: *App,
+    app: *ZAPI,
     name: ?[]const u8 = null,
 };
 
@@ -3768,10 +2871,8 @@ const DefaultValue = struct {
     write: *const fn (*std.Io.Writer) anyerror!void,
 };
 
-pub const ConditionalOptions = struct {
-    etag: ?[]const u8 = null,
-    last_modified_seconds: ?i64 = null,
-};
+/// Validators applied to a response payload.
+pub const ConditionalOptions = responses.ConditionalOptions;
 
 pub const FollowRedirectOptions = struct {
     max_redirects: usize = 10,
@@ -3929,284 +3030,15 @@ fn parseTestClientBaseUrl(base_url: []const u8) !TestClientRequestDefaults {
     };
 }
 
-pub const ResponsePayload = struct {
-    status: ?Status = null,
-    content_type: []const u8 = "application/json",
-    headers: []const HeaderField = &.{},
-    owned_headers: bool = false,
-    background_tasks: []const BackgroundTask = &.{},
-    owned_background_tasks: bool = false,
-    body: []const u8 = "",
-    owned_body: bool = false,
-    stream: ?ResponseStream = null,
+/// An encoded endpoint response awaiting finalization.
+pub const ResponsePayload = responses.ResponsePayload;
 
-    pub fn deinit(self: ResponsePayload, allocator: std.mem.Allocator) void {
-        if (self.owned_body) allocator.free(self.body);
-        if (self.owned_headers) {
-            for (self.headers) |item| {
-                allocator.free(item.name);
-                allocator.free(item.value);
-            }
-            allocator.free(self.headers);
-        }
-        if (self.owned_background_tasks) allocator.free(self.background_tasks);
-    }
-
-    pub fn header(self: ResponsePayload, name: []const u8) ?[]const u8 {
-        for (self.headers) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) return item.value;
-        }
-        return null;
-    }
-
-    pub fn hasHeader(self: ResponsePayload, name: []const u8) bool {
-        return self.header(name) != null;
-    }
-
-    pub fn headerValues(self: ResponsePayload, allocator: std.mem.Allocator, name: []const u8) ![]const []const u8 {
-        var count: usize = 0;
-        for (self.headers) |item| {
-            if (std.ascii.eqlIgnoreCase(item.name, name)) count += 1;
-        }
-
-        const values = try allocator.alloc([]const u8, count);
-        var index: usize = 0;
-        for (self.headers) |item| {
-            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
-            values[index] = item.value;
-            index += 1;
-        }
-        return values;
-    }
-
-    pub fn setHeader(self: *ResponsePayload, allocator: std.mem.Allocator, name: []const u8, value: []const u8) !void {
-        var count: usize = 1;
-        for (self.headers) |header_item| {
-            if (!std.ascii.eqlIgnoreCase(header_item.name, name)) count += 1;
-        }
-
-        var headers = try allocator.alloc(HeaderField, count);
-        var written: usize = 0;
-        errdefer freeHeaderItemsAndSlice(allocator, headers, written);
-
-        for (self.headers) |header_item| {
-            if (std.ascii.eqlIgnoreCase(header_item.name, name)) continue;
-            headers[written] = try ownedHeaderField(allocator, header_item.name, header_item.value);
-            written += 1;
-        }
-
-        headers[written] = try ownedHeaderField(allocator, name, value);
-        written += 1;
-
-        self.replaceOwnedHeaders(allocator, headers);
-    }
-
-    pub fn appendHeader(self: *ResponsePayload, allocator: std.mem.Allocator, name: []const u8, value: []const u8) !void {
-        var headers = try allocator.alloc(HeaderField, self.headers.len + 1);
-        var written: usize = 0;
-        errdefer freeHeaderItemsAndSlice(allocator, headers, written);
-
-        for (self.headers) |header_item| {
-            headers[written] = try ownedHeaderField(allocator, header_item.name, header_item.value);
-            written += 1;
-        }
-
-        headers[written] = try ownedHeaderField(allocator, name, value);
-        written += 1;
-
-        self.replaceOwnedHeaders(allocator, headers);
-    }
-
-    pub fn removeHeader(self: *ResponsePayload, allocator: std.mem.Allocator, name: []const u8) !void {
-        var count: usize = 0;
-        for (self.headers) |header_item| {
-            if (!std.ascii.eqlIgnoreCase(header_item.name, name)) count += 1;
-        }
-        if (count == self.headers.len) return;
-
-        var headers = try allocator.alloc(HeaderField, count);
-        var written: usize = 0;
-        errdefer freeHeaderItemsAndSlice(allocator, headers, written);
-
-        for (self.headers) |header_item| {
-            if (std.ascii.eqlIgnoreCase(header_item.name, name)) continue;
-            headers[written] = try ownedHeaderField(allocator, header_item.name, header_item.value);
-            written += 1;
-        }
-
-        self.replaceOwnedHeaders(allocator, headers);
-    }
-
-    pub fn clearHeaders(self: *ResponsePayload, allocator: std.mem.Allocator) void {
-        if (self.owned_headers) {
-            for (self.headers) |item| {
-                allocator.free(item.name);
-                allocator.free(item.value);
-            }
-            allocator.free(self.headers);
-        }
-        self.headers = &.{};
-        self.owned_headers = false;
-    }
-
-    pub fn makeConditional(self: *ResponsePayload, allocator: std.mem.Allocator, request: Request, options: ConditionalOptions) !void {
-        if (options.etag) |etag| {
-            try self.setHeader(allocator, "etag", etag);
-        }
-        if (options.last_modified_seconds) |seconds| {
-            const last_modified = try httpDateAlloc(allocator, seconds);
-            defer allocator.free(last_modified);
-            try self.setHeader(allocator, "last-modified", last_modified);
-        }
-        try self.removeHeader(allocator, "content-length");
-
-        const status = self.status orelse .ok;
-        if (status != .ok) return;
-        if (request.method != .GET and request.method != .HEAD) return;
-        if (!requestValidatorsNotModified(request, options.etag, options.last_modified_seconds)) return;
-
-        if (self.owned_body) allocator.free(self.body);
-        self.status = .not_modified;
-        self.content_type = "";
-        self.body = "";
-        self.owned_body = false;
-    }
-
-    pub fn setCookie(self: *ResponsePayload, allocator: std.mem.Allocator, name: []const u8, value: []const u8, options: CookieOptions) !void {
-        const cookie_header = try makeSetCookieHeader(allocator, name, value, options);
-        defer {
-            allocator.free(cookie_header.name);
-            allocator.free(cookie_header.value);
-        }
-        try self.appendHeader(allocator, cookie_header.name, cookie_header.value);
-    }
-
-    pub fn deleteCookie(self: *ResponsePayload, allocator: std.mem.Allocator, name: []const u8, options: CookieOptions) !void {
-        const cookie_header = try makeDeleteCookieHeader(allocator, name, options);
-        defer {
-            allocator.free(cookie_header.name);
-            allocator.free(cookie_header.value);
-        }
-        try self.appendHeader(allocator, cookie_header.name, cookie_header.value);
-    }
-
-    pub fn addBackgroundTask(self: *ResponsePayload, allocator: std.mem.Allocator, task: BackgroundTask) !void {
-        var tasks = try allocator.alloc(BackgroundTask, self.background_tasks.len + 1);
-        @memcpy(tasks[0..self.background_tasks.len], self.background_tasks);
-        tasks[self.background_tasks.len] = task;
-
-        if (self.owned_background_tasks) allocator.free(self.background_tasks);
-        self.background_tasks = tasks;
-        self.owned_background_tasks = true;
-    }
-
-    fn replaceOwnedHeaders(self: *ResponsePayload, allocator: std.mem.Allocator, headers: []const HeaderField) void {
-        if (self.owned_headers) {
-            for (self.headers) |item| {
-                allocator.free(item.name);
-                allocator.free(item.value);
-            }
-            allocator.free(self.headers);
-        }
-        self.headers = headers;
-        self.owned_headers = true;
-    }
-};
-
-pub const SameSite = enum {
-    lax,
-    strict,
-    none,
-
-    fn text(self: SameSite) []const u8 {
-        return switch (self) {
-            .lax => "lax",
-            .strict => "strict",
-            .none => "none",
-        };
-    }
-};
-
-pub const CookieOptions = struct {
-    path: ?[]const u8 = "/",
-    domain: ?[]const u8 = null,
-    max_age: ?i64 = null,
-    expires: ?[]const u8 = null,
-    secure: bool = false,
-    http_only: bool = false,
-    same_site: ?SameSite = .lax,
-    partitioned: bool = false,
-};
-
-pub const Session = struct {
-    allocator: std.mem.Allocator,
-    values: std.StringHashMap([]const u8),
-    changed: bool = false,
-
-    pub fn init(allocator: std.mem.Allocator) Session {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap([]const u8).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Session) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.values.deinit();
-    }
-
-    pub fn get(self: *Session, key: []const u8) ?[]const u8 {
-        return self.values.get(key);
-    }
-
-    pub fn put(self: *Session, key: []const u8, value: []const u8) !void {
-        try self.putChanged(key, value, true);
-    }
-
-    pub fn remove(self: *Session, key: []const u8) void {
-        if (self.values.fetchRemove(key)) |entry| {
-            self.allocator.free(entry.key);
-            self.allocator.free(entry.value);
-            self.changed = true;
-        }
-    }
-
-    pub fn clear(self: *Session) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.values.clearRetainingCapacity();
-        self.changed = true;
-    }
-
-    pub fn isEmpty(self: *Session) bool {
-        return self.values.count() == 0;
-    }
-
-    fn putLoaded(self: *Session, key: []const u8, value: []const u8) !void {
-        try self.putChanged(key, value, false);
-    }
-
-    fn putChanged(self: *Session, key: []const u8, value: []const u8, changed: bool) !void {
-        const owned_value = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(owned_value);
-
-        const entry = try self.values.getOrPut(key);
-        if (entry.found_existing) {
-            self.allocator.free(entry.value_ptr.*);
-        } else {
-            entry.key_ptr.* = try self.allocator.dupe(u8, key);
-        }
-        entry.value_ptr.* = owned_value;
-        if (changed) self.changed = true;
-    }
-};
+/// A SameSite cookie policy.
+pub const SameSite = sessions.SameSite;
+/// Cookie serialization options.
+pub const CookieOptions = sessions.CookieOptions;
+/// Mutable request session data.
+pub const Session = sessions.Session;
 
 pub const Route = struct {
     pub fn init(comptime opts: anytype) RouteSpec {
@@ -4257,7 +3089,7 @@ pub const Route = struct {
         };
     }
 
-    pub fn mount(comptime prefix: []const u8, app: *App, comptime route_options: anytype) MountRouteSpec {
+    pub fn mount(comptime prefix: []const u8, app: *ZAPI, comptime route_options: anytype) MountRouteSpec {
         return .{
             .prefix = prefix,
             .app = app,
@@ -4265,7 +3097,7 @@ pub const Route = struct {
         };
     }
 
-    pub fn host(comptime pattern: []const u8, app: *App, comptime route_options: anytype) HostRouteSpec {
+    pub fn host(comptime pattern: []const u8, app: *ZAPI, comptime route_options: anytype) HostRouteSpec {
         return .{
             .pattern = pattern,
             .app = app,
@@ -4315,7 +3147,7 @@ pub fn websocket(comptime path: []const u8, comptime handler: WebSocketHandlerFn
     return Route.websocket(path, handler, route_options);
 }
 
-pub fn mount(comptime prefix: []const u8, app: *App, comptime route_options: anytype) MountRouteSpec {
+pub fn mount(comptime prefix: []const u8, app: *ZAPI, comptime route_options: anytype) MountRouteSpec {
     return Route.mount(prefix, app, route_options);
 }
 
@@ -4498,7 +3330,7 @@ fn combineRouteTags(allocator: std.mem.Allocator, outer: []const []const u8, inn
 pub const MiddlewareFn = *const fn (*MiddlewareContext, Request) anyerror!Response;
 
 pub const MiddlewareContext = struct {
-    app: *App,
+    app: *ZAPI,
     index: usize,
     route_item: ?*const RegisteredRoute = null,
     route_params: ?*std.StringHashMap([]const u8) = null,
@@ -4517,72 +3349,17 @@ const ExceptionMode = enum {
     raise_unhandled,
 };
 
-pub const CorsOptions = struct {
-    allow_origins: []const []const u8 = &.{"*"},
-    allow_origin_patterns: []const []const u8 = &.{},
-    allow_methods: []const Method = &.{.GET},
-    allow_all_methods: bool = false,
-    allow_headers: []const []const u8 = &.{},
-    allow_credentials: bool = false,
-    expose_headers: []const []const u8 = &.{},
-    max_age: ?u32 = 600,
-};
-
-const cors_all_methods: []const Method = &.{ .GET, .POST, .PUT, .PATCH, .DELETE, .OPTIONS, .HEAD, .TRACE, .CONNECT };
-const cors_safelisted_headers: []const []const u8 = &.{ "Accept", "Accept-Language", "Content-Language", "Content-Type" };
-
-pub const GzipOptions = struct {
-    minimum_size: usize = 500,
-};
-
-pub const RequestBodyLimitOptions = struct {
-    max_size: usize,
-    status: Status = .payload_too_large,
-    detail: []const u8 = "Request body too large",
-};
-
-pub const MethodOverrideOptions = struct {
-    header_name: []const u8 = "x-http-method-override",
-    allowed_original_methods: []const Method = &.{.POST},
-    allowed_override_methods: []const Method = &.{ .PUT, .PATCH, .DELETE },
-};
-
-pub const ProxyHeadersOptions = struct {
-    forwarded_proto_header: []const u8 = "x-forwarded-proto",
-    forwarded_host_header: []const u8 = "x-forwarded-host",
-    forwarded_prefix_header: []const u8 = "x-forwarded-prefix",
-};
-
-pub const RequestIdOptions = struct {
-    header_name: []const u8 = "x-request-id",
-    default_value: ?[]const u8 = null,
-};
-
-pub const ResponseHeadersOptions = struct {
-    headers: []const HeaderField = &.{},
-    append_headers: []const HeaderField = &.{},
-    preserve_existing: bool = false,
-};
-
-pub const SecurityHeadersOptions = struct {
-    content_type_options: ?[]const u8 = "nosniff",
-    frame_options: ?[]const u8 = "DENY",
-    referrer_policy: ?[]const u8 = "no-referrer",
-    permissions_policy: ?[]const u8 = null,
-    content_security_policy: ?[]const u8 = null,
-    strict_transport_security: ?[]const u8 = null,
-};
-
-pub const SessionOptions = struct {
-    secret_key: []const u8,
-    session_cookie: []const u8 = "session",
-    max_age: ?i64 = 14 * 24 * 60 * 60,
-    path: ?[]const u8 = "/",
-    domain: ?[]const u8 = null,
-    https_only: bool = false,
-    http_only: bool = true,
-    same_site: ?SameSite = .lax,
-};
+pub const CorsOptions = middleware_options.CorsOptions;
+pub const GzipOptions = middleware_options.GzipOptions;
+pub const RequestBodyLimitOptions = middleware_options.RequestBodyLimitOptions;
+pub const MethodOverrideOptions = middleware_options.MethodOverrideOptions;
+pub const ProxyHeadersOptions = middleware_options.ProxyHeadersOptions;
+pub const RequestIdOptions = middleware_options.RequestIdOptions;
+pub const ResponseHeadersOptions = middleware_options.ResponseHeadersOptions;
+pub const SecurityHeadersOptions = middleware_options.SecurityHeadersOptions;
+pub const SessionOptions = middleware_options.SessionOptions;
+const cors_all_methods = middleware_options.cors_all_methods;
+const cors_safelisted_headers = middleware_options.cors_safelisted_headers;
 
 pub fn gzipMiddleware(comptime options: GzipOptions) MiddlewareFn {
     return struct {
@@ -4802,14 +3579,8 @@ pub fn sessionMiddleware(comptime options: SessionOptions) MiddlewareFn {
     }.handle;
 }
 
-pub const TrustedHostOptions = struct {
-    allowed_hosts: []const []const u8 = &.{"*"},
-    www_redirect: bool = true,
-};
-
-pub const HttpsRedirectOptions = struct {
-    status: Status = .temporary_redirect,
-};
+pub const TrustedHostOptions = middleware_options.TrustedHostOptions;
+pub const HttpsRedirectOptions = middleware_options.HttpsRedirectOptions;
 
 pub fn httpsRedirectMiddleware(comptime options: HttpsRedirectOptions) MiddlewareFn {
     return struct {
@@ -4872,7 +3643,7 @@ pub fn trustedHostMiddleware(comptime options: TrustedHostOptions) MiddlewareFn 
 pub const ExceptionHandlerFn = *const fn (*ExceptionContext) anyerror!Response;
 
 pub const ExceptionContext = struct {
-    app: *App,
+    app: *ZAPI,
     request: Request,
     err: anyerror,
 };
@@ -4880,13 +3651,13 @@ pub const ExceptionContext = struct {
 pub const StatusHandlerFn = *const fn (*StatusHandlerContext) anyerror!Response;
 
 pub const StatusHandlerContext = struct {
-    app: *App,
+    app: *ZAPI,
     request: Request,
     status: Status,
     detail: []const u8,
 };
 
-pub const LifecycleFn = *const fn (*App) anyerror!void;
+pub const LifecycleFn = *const fn (*ZAPI) anyerror!void;
 
 const ExceptionHandler = struct {
     err: anyerror,
@@ -4901,14 +3672,14 @@ const StatusHandler = struct {
 const MountedApp = struct {
     prefix: []const u8,
     name: ?[]const u8 = null,
-    app: *App,
+    app: *ZAPI,
 };
 
 const HostApp = struct {
     pattern: []const u8,
     url_pattern: []const u8,
     name: ?[]const u8 = null,
-    app: *App,
+    app: *ZAPI,
 };
 
 const ProblemDetail = struct {
@@ -4943,7 +3714,7 @@ pub const OpenApiServer = struct {
     description: ?[]const u8 = null,
 };
 
-pub const AppOptions = struct {
+pub const ZAPIOptions = struct {
     title: []const u8 = "Zapi",
     version: []const u8 = "0.1.0",
     description: ?[]const u8 = null,
@@ -4993,73 +3764,18 @@ pub const ServeListenerOptions = struct {
     buffer_request_body: bool = true,
 };
 
-pub const StaticFilesOptions = struct {
-    dir: std.Io.Dir = .cwd(),
-    html: bool = false,
-    follow_symlinks: bool = false,
-    max_size: std.Io.Limit = .limited(16 * 1024 * 1024),
-    io: ?std.Io = null,
-};
-
-pub const PathConvertor = struct {
-    name: []const u8,
-    matches: *const fn ([]const u8) bool,
-};
-
-const StaticFilesState = struct {
-    dir: std.Io.Dir,
-    html: bool,
-    follow_symlinks: bool,
-    max_size: std.Io.Limit,
-};
-
-pub const StaticFiles = struct {
-    app: App,
-    state: *StaticFilesState,
-
-    pub fn init(allocator: std.mem.Allocator, options: StaticFilesOptions) !StaticFiles {
-        const state = try allocator.create(StaticFilesState);
-        errdefer allocator.destroy(state);
-        state.* = .{
-            .dir = options.dir,
-            .html = options.html,
-            .follow_symlinks = options.follow_symlinks,
-            .max_size = options.max_size,
-        };
-
-        var app = App.init(allocator, .{
-            .openapi_url = null,
-            .docs_url = null,
-            .oauth2_redirect_url = null,
-            .redoc_url = null,
-            .io = options.io,
-        });
-        errdefer app.deinit();
-        app.setState(state);
-        try app.addStatusHandler(.method_not_allowed, staticMethodNotAllowed);
-        try app.route(Route.methods("/", &.{ .GET, .HEAD }, staticFileRoot, .{}));
-        try app.route(Route.methods("/{path:path}", &.{ .GET, .HEAD }, staticFilePath, .{}));
-
-        return .{
-            .app = app,
-            .state = state,
-        };
-    }
-
-    pub fn deinit(self: *StaticFiles) void {
-        const allocator = self.app.allocator;
-        self.app.deinit();
-        allocator.destroy(self.state);
-    }
-};
+/// A named path converter.
+pub const PathConvertor = routing.PathConvertor;
 
 /// A configured application and its registered routes.
 /// The allocator must be thread-safe when concurrent serving is enabled.
-pub const App = struct {
+pub const ZAPI = struct {
     allocator: std.mem.Allocator,
-    options: AppOptions,
+    options: ZAPIOptions,
     routes: std.ArrayList(RegisteredRoute),
+    route_tree: routing.RouteTree,
     websocket_routes: std.ArrayList(RegisteredWebSocketRoute),
+    websocket_route_tree: routing.RouteTree,
     mounts: std.ArrayList(MountedApp),
     hosts: std.ArrayList(HostApp),
     middlewares: std.ArrayList(MiddlewareFn),
@@ -5070,12 +3786,14 @@ pub const App = struct {
     path_convertors: std.ArrayList(PathConvertor),
     state_ptr: ?*anyopaque = null,
 
-    pub fn init(allocator: std.mem.Allocator, options: AppOptions) App {
+    pub fn init(allocator: std.mem.Allocator, options: ZAPIOptions) ZAPI {
         return .{
             .allocator = allocator,
             .options = options,
             .routes = .empty,
+            .route_tree = .{},
             .websocket_routes = .empty,
+            .websocket_route_tree = .{},
             .mounts = .empty,
             .hosts = .empty,
             .middlewares = .empty,
@@ -5087,7 +3805,9 @@ pub const App = struct {
         };
     }
 
-    pub fn deinit(self: *App) void {
+    pub fn deinit(self: *ZAPI) void {
+        self.route_tree.deinit(self.allocator);
+        self.websocket_route_tree.deinit(self.allocator);
         for (self.routes.items) |registered_route| {
             self.allocator.free(registered_route.path);
             if (registered_route.middlewares_owned) self.allocator.free(registered_route.middlewares);
@@ -5124,20 +3844,20 @@ pub const App = struct {
         self.path_convertors.deinit(self.allocator);
     }
 
-    pub fn setState(self: *App, state_ptr: anytype) void {
+    pub fn setState(self: *ZAPI, state_ptr: anytype) void {
         self.state_ptr = @ptrCast(state_ptr);
     }
 
-    pub fn state(self: *App, comptime T: type) *T {
+    pub fn state(self: *ZAPI, comptime T: type) *T {
         return @ptrCast(@alignCast(self.state_ptr.?));
     }
 
-    pub fn maybeState(self: *App, comptime T: type) ?*T {
+    pub fn maybeState(self: *ZAPI, comptime T: type) ?*T {
         const ptr = self.state_ptr orelse return null;
         return @ptrCast(@alignCast(ptr));
     }
 
-    pub fn addPathConvertor(self: *App, name: []const u8, matches: *const fn ([]const u8) bool) !void {
+    pub fn addPathConvertor(self: *ZAPI, name: []const u8, matches: *const fn ([]const u8) bool) !void {
         if (!validPathConvertorName(name)) return error.InvalidPathConvertor;
         if (parseBuiltinPathConverter(name) != null) return error.InvalidPathConvertor;
         for (self.path_convertors.items) |*item| {
@@ -5154,7 +3874,7 @@ pub const App = struct {
         });
     }
 
-    pub fn includeRouter(self: *App, router: anytype) !void {
+    pub fn includeRouter(self: *ZAPI, router: anytype) !void {
         const RouterType = @TypeOf(router);
         if (comptime isRouterInitResult(RouterType)) {
             var tags_storage = router.tags;
@@ -5168,7 +3888,7 @@ pub const App = struct {
         return self.includeRouterSpec(router);
     }
 
-    fn includeRouterSpec(self: *App, router: RouterSpec) !void {
+    fn includeRouterSpec(self: *ZAPI, router: RouterSpec) !void {
         for (router.routes) |route_spec| {
             try self.registerRouteSpec(router.prefix, router.tags, router.middlewares, route_spec);
         }
@@ -5186,7 +3906,7 @@ pub const App = struct {
         }
     }
 
-    pub fn includeRoutes(self: *App, opts: anytype) !void {
+    pub fn includeRoutes(self: *ZAPI, opts: anytype) !void {
         const Opts = @TypeOf(opts);
         if (!@hasField(Opts, "routes")) @compileError("includeRoutes requires a routes field");
 
@@ -5202,7 +3922,7 @@ pub const App = struct {
         try self.includeRouteEntries(prefix, tags, middlewares, opts.routes);
     }
 
-    fn includeRouteEntries(self: *App, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, entries: anytype) !void {
+    fn includeRouteEntries(self: *ZAPI, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, entries: anytype) !void {
         const Entries = @TypeOf(entries);
         switch (@typeInfo(Entries)) {
             .@"struct" => |info| {
@@ -5243,7 +3963,7 @@ pub const App = struct {
         }
     }
 
-    fn includeRouteEntry(self: *App, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, entry: anytype) !void {
+    fn includeRouteEntry(self: *ZAPI, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, entry: anytype) !void {
         const Entry = @TypeOf(entry);
         if (Entry == RouteSpec) {
             return self.registerRouteSpec(prefix, tags, middlewares, entry);
@@ -5299,7 +4019,7 @@ pub const App = struct {
         @compileError("includeRoutes routes must be RouteSpec, WebSocketRouteSpec, MountRouteSpec, HostRouteSpec, Router.init(...), or RouterSpec values; got " ++ @typeName(Entry));
     }
 
-    fn registerRouteSpec(self: *App, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, route_spec: RouteSpec) !void {
+    fn registerRouteSpec(self: *ZAPI, prefix: []const u8, tags: []const []const u8, middlewares: []const MiddlewareFn, route_spec: RouteSpec) !void {
         const full_path = try joinPaths(self.allocator, prefix, route_spec.path);
         errdefer self.allocator.free(full_path);
         try validateRoutePath(self.allocator, full_path, self.path_convertors.items);
@@ -5335,9 +4055,14 @@ pub const App = struct {
             .middlewares_owned = route_middlewares.owned,
             .metadata = metadata,
         });
+        errdefer _ = self.routes.pop();
+        try self.route_tree.add(self.allocator, full_path, .{
+            .index = self.routes.items.len - 1,
+            .method = route_spec.method,
+        });
     }
 
-    fn registerWebSocketRouteSpec(self: *App, prefix: []const u8, route_spec: WebSocketRouteSpec) !void {
+    fn registerWebSocketRouteSpec(self: *ZAPI, prefix: []const u8, route_spec: WebSocketRouteSpec) !void {
         const full_path = try joinPaths(self.allocator, prefix, route_spec.path);
         errdefer self.allocator.free(full_path);
         try validateRoutePath(self.allocator, full_path, self.path_convertors.items);
@@ -5348,25 +4073,29 @@ pub const App = struct {
             .handler = route_spec.handler,
             .name = owned_name,
         });
+        errdefer _ = self.websocket_routes.pop();
+        try self.websocket_route_tree.add(self.allocator, full_path, .{
+            .index = self.websocket_routes.items.len - 1,
+        });
     }
 
-    fn registerMountRouteSpec(self: *App, prefix: []const u8, route_spec: MountRouteSpec) !void {
+    fn registerMountRouteSpec(self: *ZAPI, prefix: []const u8, route_spec: MountRouteSpec) !void {
         const full_prefix = try joinPaths(self.allocator, prefix, route_spec.prefix);
         defer self.allocator.free(full_prefix);
         try self.mountNamed(full_prefix, route_spec.name, route_spec.app);
     }
 
-    fn registerHostRouteSpec(self: *App, route_spec: HostRouteSpec) !void {
+    fn registerHostRouteSpec(self: *ZAPI, route_spec: HostRouteSpec) !void {
         try self.hostNamed(route_spec.pattern, route_spec.name, route_spec.app);
     }
 
-    fn applyRegisteredRouteName(self: *App, metadata: *RouteMetadata, method: Method, path: []const u8) !void {
+    fn applyRegisteredRouteName(self: *ZAPI, metadata: *RouteMetadata, method: Method, path: []const u8) !void {
         if (metadata.name_is_explicit) return;
         metadata.name = try routeDefaultNameAlloc(self.allocator, method, path);
         metadata.name_owned = true;
     }
 
-    fn validateRouteNameAvailable(self: *App, name: ?[]const u8, path: []const u8) !void {
+    fn validateRouteNameAvailable(self: *ZAPI, name: ?[]const u8, path: []const u8) !void {
         const route_name = name orelse return;
 
         for (self.routes.items) |route_item| {
@@ -5382,7 +4111,7 @@ pub const App = struct {
         }
     }
 
-    pub fn route(self: *App, route_spec: anytype) !void {
+    pub fn route(self: *ZAPI, route_spec: anytype) !void {
         const Spec = @TypeOf(route_spec);
         if (Spec == RouteSpec) {
             return self.includeRouter(RouterSpec{ .routes = &.{route_spec} });
@@ -5402,14 +4131,14 @@ pub const App = struct {
         if (Spec == RouterSpec) {
             return self.includeRouter(route_spec);
         }
-        @compileError("App.route requires a RouteSpec, WebSocketRouteSpec, MountRouteSpec, HostRouteSpec, or router");
+        @compileError("ZAPI.route requires a RouteSpec, WebSocketRouteSpec, MountRouteSpec, HostRouteSpec, or router");
     }
 
-    pub fn mount(self: *App, prefix: []const u8, app: *App) !void {
+    pub fn mount(self: *ZAPI, prefix: []const u8, app: *ZAPI) !void {
         try self.mountNamed(prefix, null, app);
     }
 
-    pub fn mountNamed(self: *App, prefix: []const u8, name: ?[]const u8, app: *App) !void {
+    pub fn mountNamed(self: *ZAPI, prefix: []const u8, name: ?[]const u8, app: *ZAPI) !void {
         if (prefix.len == 0 or prefix[0] != '/') return error.InvalidMountPath;
         const normalized = normalizeMountPrefix(prefix);
         try validateMountPath(self.allocator, normalized, self.path_convertors.items);
@@ -5428,11 +4157,11 @@ pub const App = struct {
         });
     }
 
-    pub fn host(self: *App, pattern: []const u8, app: *App) !void {
+    pub fn host(self: *ZAPI, pattern: []const u8, app: *ZAPI) !void {
         try self.hostNamed(pattern, null, app);
     }
 
-    pub fn hostNamed(self: *App, pattern: []const u8, name: ?[]const u8, app: *App) !void {
+    pub fn hostNamed(self: *ZAPI, pattern: []const u8, name: ?[]const u8, app: *ZAPI) !void {
         const match_pattern = normalizeHostMatchPattern(pattern) orelse return error.InvalidHostPattern;
         const url_pattern = normalizeHostUrlPattern(pattern) orelse return error.InvalidHostPattern;
         try validateHostPattern(self.allocator, match_pattern, self.path_convertors.items);
@@ -5454,15 +4183,15 @@ pub const App = struct {
         });
     }
 
-    pub fn addMiddleware(self: *App, middleware_fn: MiddlewareFn) !void {
+    pub fn addMiddleware(self: *ZAPI, middleware_fn: MiddlewareFn) !void {
         try self.middlewares.append(self.allocator, middleware_fn);
     }
 
-    pub fn middleware(self: *App, middleware_fn: MiddlewareFn) !void {
+    pub fn middleware(self: *ZAPI, middleware_fn: MiddlewareFn) !void {
         return self.addMiddleware(middleware_fn);
     }
 
-    pub fn addExceptionHandler(self: *App, err: anyerror, handler: ExceptionHandlerFn) !void {
+    pub fn addExceptionHandler(self: *ZAPI, err: anyerror, handler: ExceptionHandlerFn) !void {
         for (self.exception_handlers.items) |*item| {
             if (item.err == err) {
                 item.handle = handler;
@@ -5476,7 +4205,7 @@ pub const App = struct {
         });
     }
 
-    pub fn addStatusHandler(self: *App, status: Status, handler: StatusHandlerFn) !void {
+    pub fn addStatusHandler(self: *ZAPI, status: Status, handler: StatusHandlerFn) !void {
         for (self.status_handlers.items) |*item| {
             if (item.status == status) {
                 item.handle = handler;
@@ -5490,15 +4219,15 @@ pub const App = struct {
         });
     }
 
-    pub fn addStartupHandler(self: *App, handler: LifecycleFn) !void {
+    pub fn addStartupHandler(self: *ZAPI, handler: LifecycleFn) !void {
         try self.startup_handlers.append(self.allocator, handler);
     }
 
-    pub fn addShutdownHandler(self: *App, handler: LifecycleFn) !void {
+    pub fn addShutdownHandler(self: *ZAPI, handler: LifecycleFn) !void {
         try self.shutdown_handlers.append(self.allocator, handler);
     }
 
-    pub fn startup(self: *App) !void {
+    pub fn startup(self: *ZAPI) !void {
         for (self.startup_handlers.items) |handler| {
             try handler(self);
         }
@@ -5510,7 +4239,7 @@ pub const App = struct {
         }
     }
 
-    pub fn shutdown(self: *App) !void {
+    pub fn shutdown(self: *ZAPI) !void {
         var mount_index = self.mounts.items.len;
         while (mount_index > 0) {
             mount_index -= 1;
@@ -5530,7 +4259,162 @@ pub const App = struct {
         }
     }
 
-    pub fn urlPathFor(self: *App, name: []const u8, params: anytype) anyerror![]u8 {
+    fn urlResolver(self: *ZAPI) requests.URLResolver {
+        return .{
+            .context = self,
+            .resolve_fn = resolveRequestPath,
+        };
+    }
+
+    fn resolveRequestPath(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        params: []const HeaderField,
+    ) anyerror![]u8 {
+        const self: *ZAPI = @ptrCast(@alignCast(context));
+        return self.urlPathForFields(allocator, name, params);
+    }
+
+    fn urlPathForFields(
+        self: *ZAPI,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        params: []const HeaderField,
+    ) anyerror![]u8 {
+        const used = try allocator.alloc(bool, params.len);
+        defer allocator.free(used);
+        @memset(used, false);
+
+        const path = self.urlPathForFieldsTracked(allocator, name, params, used) catch |err| switch (err) {
+            error.MissingPathParam => return error.NoRoute,
+            else => return err,
+        };
+        errdefer allocator.free(path);
+        for (used) |is_used| {
+            if (!is_used) return error.NoRoute;
+        }
+        return path;
+    }
+
+    fn urlPathForFieldsTracked(
+        self: *ZAPI,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        params: []const HeaderField,
+        used: []bool,
+    ) anyerror![]u8 {
+        for (self.routes.items) |route_item| {
+            const route_name = route_item.metadata.name orelse continue;
+            if (!std.mem.eql(u8, route_name, name)) continue;
+            return routing.renderPathFields(allocator, route_item.path, params, used, self.path_convertors.items);
+        }
+
+        for (self.websocket_routes.items) |route_item| {
+            const route_name = route_item.name orelse continue;
+            if (!std.mem.eql(u8, route_name, name)) continue;
+            return routing.renderPathFields(allocator, route_item.path, params, used, self.path_convertors.items);
+        }
+
+        for (self.mounts.items) |mounted_app| {
+            if (mounted_app.name) |mount_name| {
+                if (std.mem.eql(u8, name, mount_name)) {
+                    return routing.renderMountFields(allocator, mounted_app.prefix, params, used, self.path_convertors.items);
+                }
+                if (namespacedRouteName(name, mount_name)) |child_name| {
+                    const candidate_used = try allocator.dupe(bool, used);
+                    defer allocator.free(candidate_used);
+                    const child_path = try mounted_app.app.urlPathForFieldsTracked(
+                        allocator,
+                        child_name,
+                        params,
+                        candidate_used,
+                    );
+                    defer allocator.free(child_path);
+                    const mount_path = try routing.renderPathFields(
+                        allocator,
+                        mounted_app.prefix,
+                        params,
+                        candidate_used,
+                        self.path_convertors.items,
+                    );
+                    defer allocator.free(mount_path);
+                    @memcpy(used, candidate_used);
+                    return joinMountRoutePath(allocator, mount_path, child_path);
+                }
+            }
+        }
+
+        for (self.hosts.items) |host_app| {
+            if (host_app.name) |host_name| {
+                if (std.mem.eql(u8, name, host_name)) {
+                    return routing.renderMountFields(allocator, "/", params, used, self.path_convertors.items);
+                }
+                if (namespacedRouteName(name, host_name)) |child_name| {
+                    const candidate_used = try allocator.dupe(bool, used);
+                    defer allocator.free(candidate_used);
+                    const child_path = try host_app.app.urlPathForFieldsTracked(
+                        allocator,
+                        child_name,
+                        params,
+                        candidate_used,
+                    );
+                    defer allocator.free(child_path);
+                    @memcpy(used, candidate_used);
+                    return allocator.dupe(u8, child_path);
+                }
+            }
+        }
+
+        for (self.mounts.items) |mounted_app| {
+            const candidate_used = try allocator.dupe(bool, used);
+            defer allocator.free(candidate_used);
+            const child_path = mounted_app.app.urlPathForFieldsTracked(
+                allocator,
+                name,
+                params,
+                candidate_used,
+            ) catch |err| switch (err) {
+                error.NoRoute => continue,
+                else => return err,
+            };
+            defer allocator.free(child_path);
+            const mount_path = routing.renderPathFields(
+                allocator,
+                mounted_app.prefix,
+                params,
+                candidate_used,
+                self.path_convertors.items,
+            ) catch |err| switch (err) {
+                error.MissingPathParam, error.InvalidPathParam => continue,
+                else => return err,
+            };
+            defer allocator.free(mount_path);
+            @memcpy(used, candidate_used);
+            return joinMountRoutePath(allocator, mount_path, child_path);
+        }
+
+        for (self.hosts.items) |host_app| {
+            const candidate_used = try allocator.dupe(bool, used);
+            defer allocator.free(candidate_used);
+            const child_path = host_app.app.urlPathForFieldsTracked(
+                allocator,
+                name,
+                params,
+                candidate_used,
+            ) catch |err| switch (err) {
+                error.NoRoute => continue,
+                else => return err,
+            };
+            defer allocator.free(child_path);
+            @memcpy(used, candidate_used);
+            return allocator.dupe(u8, child_path);
+        }
+
+        return error.NoRoute;
+    }
+
+    pub fn urlPathFor(self: *ZAPI, name: []const u8, params: anytype) anyerror![]u8 {
         const Params = @TypeOf(params);
         var used = initParamUsage(Params);
         const path = self.urlPathForTracked(name, params, &used) catch |err| switch (err) {
@@ -5542,7 +4426,7 @@ pub const App = struct {
         return path;
     }
 
-    fn urlPathForTracked(self: *App, name: []const u8, params: anytype, used: anytype) anyerror![]u8 {
+    fn urlPathForTracked(self: *ZAPI, name: []const u8, params: anytype, used: anytype) anyerror![]u8 {
         for (self.routes.items) |route_item| {
             const route_name = route_item.metadata.name orelse continue;
             if (!std.mem.eql(u8, route_name, name)) continue;
@@ -5617,7 +4501,7 @@ pub const App = struct {
         return error.NoRoute;
     }
 
-    pub fn urlForHost(self: *App, name: []const u8, params: anytype, scheme: []const u8) anyerror![]u8 {
+    pub fn urlForHost(self: *ZAPI, name: []const u8, params: anytype, scheme: []const u8) anyerror![]u8 {
         const Params = @TypeOf(params);
         var used = initParamUsage(Params);
         const url = self.urlForHostTracked(name, params, scheme, &used) catch |err| switch (err) {
@@ -5629,7 +4513,7 @@ pub const App = struct {
         return url;
     }
 
-    fn urlForHostTracked(self: *App, name: []const u8, params: anytype, scheme: []const u8, used: anytype) anyerror![]u8 {
+    fn urlForHostTracked(self: *ZAPI, name: []const u8, params: anytype, scheme: []const u8, used: anytype) anyerror![]u8 {
         for (self.hosts.items) |host_app| {
             const host_name = host_app.name orelse continue;
             if (std.mem.eql(u8, name, host_name)) {
@@ -5653,7 +4537,7 @@ pub const App = struct {
         return error.NoRoute;
     }
 
-    pub fn handle(self: *App, request: Request) !Response {
+    pub fn handle(self: *ZAPI, request: Request) !Response {
         var response = try self.handleWithoutBackgroundTasksMode(request, .catch_unhandled);
         errdefer response.deinit(self.allocator);
         try response.collectStream(self.allocator);
@@ -5662,7 +4546,7 @@ pub const App = struct {
         return response;
     }
 
-    pub fn handleOrRaise(self: *App, request: Request) !Response {
+    pub fn handleOrRaise(self: *ZAPI, request: Request) !Response {
         var response = try self.handleWithoutBackgroundTasksMode(request, .raise_unhandled);
         errdefer response.deinit(self.allocator);
         try response.collectStream(self.allocator);
@@ -5671,13 +4555,13 @@ pub const App = struct {
         return response;
     }
 
-    fn handleWithoutBackgroundTasks(self: *App, request: Request) !Response {
+    fn handleWithoutBackgroundTasks(self: *ZAPI, request: Request) !Response {
         return self.handleWithoutBackgroundTasksMode(request, .catch_unhandled);
     }
 
-    fn handleWithoutBackgroundTasksMode(self: *App, request: Request, mode: ExceptionMode) !Response {
+    fn handleWithoutBackgroundTasksMode(self: *ZAPI, request: Request, mode: ExceptionMode) !Response {
         var scoped_request = request;
-        if (scoped_request.url_app == null) scoped_request.url_app = self;
+        if (scoped_request.url_resolver == null) scoped_request.url_resolver = self.urlResolver();
         if (scoped_request.url_root_path == null) scoped_request.url_root_path = scoped_request.root_path;
 
         if (self.requestBodyTooLarge(scoped_request)) {
@@ -5686,16 +4570,16 @@ pub const App = struct {
         return self.handleWithMiddlewareMode(scoped_request, 0, mode) catch |err| self.handleExceptionMode(scoped_request, err, mode);
     }
 
-    fn requestBodyTooLarge(self: *App, request: Request) bool {
+    fn requestBodyTooLarge(self: *ZAPI, request: Request) bool {
         const max_size = self.options.max_request_body_size orelse return false;
         return request.body.len > max_size;
     }
 
-    fn handleWithMiddleware(self: *App, request: Request, index: usize) !Response {
+    fn handleWithMiddleware(self: *ZAPI, request: Request, index: usize) !Response {
         return self.handleWithMiddlewareMode(request, index, .catch_unhandled);
     }
 
-    fn handleWithMiddlewareMode(self: *App, request: Request, index: usize, mode: ExceptionMode) !Response {
+    fn handleWithMiddlewareMode(self: *ZAPI, request: Request, index: usize, mode: ExceptionMode) !Response {
         if (index < self.middlewares.items.len) {
             var ctx = MiddlewareContext{
                 .app = self,
@@ -5708,11 +4592,11 @@ pub const App = struct {
         return self.handleCoreMode(request, mode);
     }
 
-    fn handleRouteWithMiddleware(self: *App, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8), index: usize) !Response {
+    fn handleRouteWithMiddleware(self: *ZAPI, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8), index: usize) !Response {
         return self.handleRouteWithMiddlewareMode(request, route_item, params, index, .catch_unhandled);
     }
 
-    fn handleRouteWithMiddlewareMode(self: *App, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8), index: usize, mode: ExceptionMode) !Response {
+    fn handleRouteWithMiddlewareMode(self: *ZAPI, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8), index: usize, mode: ExceptionMode) !Response {
         if (index < route_item.middlewares.len) {
             var ctx = MiddlewareContext{
                 .app = self,
@@ -5727,7 +4611,7 @@ pub const App = struct {
         return self.dispatchRoute(request, route_item, params);
     }
 
-    fn dispatchRoute(self: *App, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8)) !Response {
+    fn dispatchRoute(self: *ZAPI, request: Request, route_item: *const RegisteredRoute, params: *std.StringHashMap([]const u8)) !Response {
         const request_path_params = try requestPathParamFields(self.allocator, request.host_params, route_item.path, params);
         defer self.allocator.free(request_path_params);
 
@@ -5774,11 +4658,11 @@ pub const App = struct {
         return response;
     }
 
-    fn handleCore(self: *App, request: Request) !Response {
+    fn handleCore(self: *ZAPI, request: Request) !Response {
         return self.handleCoreMode(request, .catch_unhandled);
     }
 
-    fn handleCoreMode(self: *App, request: Request, mode: ExceptionMode) !Response {
+    fn handleCoreMode(self: *ZAPI, request: Request, mode: ExceptionMode) !Response {
         if (self.options.openapi_url) |openapi_url| {
             if (methodReadsGetResource(request.method) and std.mem.eql(u8, request.path, openapi_url)) {
                 var response = Response.init(.ok);
@@ -5872,32 +4756,32 @@ pub const App = struct {
             }
         }
 
-        var allowed_methods: std.ArrayList(Method) = .empty;
-        defer allowed_methods.deinit(self.allocator);
-        const explicit_head_route = request.method == .HEAD and try self.hasMatchingRoute(.HEAD, request.path);
-        const explicit_options_route = try self.hasMatchingRoute(.OPTIONS, request.path);
+        const route_matches = self.route_tree.matches(request.path, self.path_convertors.items);
+        const explicit_head_route = route_matches.firstForMethod(.HEAD) != null;
+        const explicit_options_route = route_matches.firstForMethod(.OPTIONS) != null;
+        const route_index = route_matches.firstForMethod(request.method) orelse if (request.method == .HEAD and !explicit_head_route)
+            route_matches.firstForMethod(.GET)
+        else
+            null;
 
-        for (self.routes.items) |*route_item| {
+        if (route_index) |index| {
+            const route_item = &self.routes.items[index];
             var params = std.StringHashMap([]const u8).init(self.allocator);
             defer params.deinit();
-            for (request.host_params) |param| {
-                try params.put(param.name, param.value);
-            }
-
+            for (request.host_params) |param| try params.put(param.name, param.value);
             if (!(try matchPath(route_item.path, request.path, &params, self.path_convertors.items))) {
-                continue;
+                return error.InvalidRouteIndex;
             }
-
-            const head_for_get = request.method == .HEAD and route_item.method == .GET and !explicit_head_route;
-            if (route_item.method != request.method and !head_for_get) {
-                try appendAllowedMethod(self.allocator, &allowed_methods, route_item.method);
-                continue;
-            }
-
             return self.handleRouteWithMiddlewareMode(request, route_item, &params, 0, mode);
         }
 
-        if (allowed_methods.items.len > 0) {
+        if (route_matches.first_any != null) {
+            var allowed_methods: std.ArrayList(Method) = .empty;
+            defer allowed_methods.deinit(self.allocator);
+            var method_buffer: [std.meta.fields(Method).len]Method = undefined;
+            for (route_matches.methodsInRegistrationOrder(&method_buffer)) |method| {
+                try appendAllowedMethod(self.allocator, &allowed_methods, method);
+            }
             if (!explicit_options_route) try appendAllowedMethod(self.allocator, &allowed_methods, .OPTIONS);
             if (request.method == .OPTIONS and !explicit_options_route) return self.automaticOptions(request, allowed_methods.items);
             return self.methodNotAllowed(request, allowed_methods.items);
@@ -5908,24 +4792,11 @@ pub const App = struct {
         return self.problemForRequest(request, .not_found, "Not found");
     }
 
-    fn hasMatchingRoute(self: *App, method: Method, path: []const u8) !bool {
-        for (self.routes.items) |route_item| {
-            if (route_item.method != method) continue;
-
-            var params = std.StringHashMap([]const u8).init(self.allocator);
-            defer params.deinit();
-
-            if (try matchPath(route_item.path, path, &params, self.path_convertors.items)) return true;
-        }
-
-        return false;
-    }
-
-    fn handleException(self: *App, request: Request, err: anyerror) !Response {
+    fn handleException(self: *ZAPI, request: Request, err: anyerror) !Response {
         return self.handleExceptionMode(request, err, .catch_unhandled);
     }
 
-    fn handleExceptionMode(self: *App, request: Request, err: anyerror, mode: ExceptionMode) !Response {
+    fn handleExceptionMode(self: *ZAPI, request: Request, err: anyerror, mode: ExceptionMode) !Response {
         for (self.exception_handlers.items) |item| {
             if (item.err != err) continue;
             var ctx = ExceptionContext{
@@ -5942,7 +4813,7 @@ pub const App = struct {
         return self.problemForRequest(request, .internal_server_error, "Internal server error");
     }
 
-    pub fn handleHttp(self: *App, http_request: *std.http.Server.Request) !void {
+    pub fn handleHttp(self: *ZAPI, http_request: *std.http.Server.Request) !void {
         const target = try self.allocator.dupe(u8, http_request.head.target);
         defer self.allocator.free(target);
         const request_method = try methodFromHttp(http_request.head.method);
@@ -5991,7 +4862,7 @@ pub const App = struct {
         try response.runBackgroundTasks();
     }
 
-    pub fn handleHttpStreaming(self: *App, http_request: *std.http.Server.Request) !void {
+    pub fn handleHttpStreaming(self: *ZAPI, http_request: *std.http.Server.Request) !void {
         const target = try self.allocator.dupe(u8, http_request.head.target);
         defer self.allocator.free(target);
         const request_method = try methodFromHttp(http_request.head.method);
@@ -6050,7 +4921,7 @@ pub const App = struct {
         try response.runBackgroundTasks();
     }
 
-    fn readHttpRequestBody(self: *App, http_request: *std.http.Server.Request) ![]u8 {
+    fn readHttpRequestBody(self: *ZAPI, http_request: *std.http.Server.Request) ![]u8 {
         if (!http_request.head.method.requestHasBody()) return self.allocator.dupe(u8, "");
 
         var body_buffer: [8192]u8 = undefined;
@@ -6081,14 +4952,14 @@ pub const App = struct {
         return body.toOwnedSlice(self.allocator);
     }
 
-    fn respondRequestBodyTooLarge(self: *App, http_request: *std.http.Server.Request, request: Request) !void {
+    fn respondRequestBodyTooLarge(self: *ZAPI, http_request: *std.http.Server.Request, request: Request) !void {
         var response = try self.problemForRequest(request, .payload_too_large, "Request body too large");
         defer response.deinit(self.allocator);
         try self.finalizeResponseForTransport(&response);
         try self.respondHttp(http_request, response);
     }
 
-    fn handleWebSocketHttp(self: *App, http_request: *std.http.Server.Request, request: Request) !bool {
+    fn handleWebSocketHttp(self: *ZAPI, http_request: *std.http.Server.Request, request: Request) !bool {
         if (request.header("host")) |host_header| {
             if (requestHostName(host_header)) |host_name| {
                 for (self.hosts.items) |host_app| {
@@ -6120,24 +4991,19 @@ pub const App = struct {
             }
         }
 
-        for (self.websocket_routes.items) |*route_item| {
-            var params = std.StringHashMap([]const u8).init(self.allocator);
-            defer params.deinit();
-            for (request.host_params) |param| {
-                try params.put(param.name, param.value);
-            }
-
-            if (!(try matchPath(route_item.path, request.path, &params, self.path_convertors.items))) {
-                continue;
-            }
-
-            return try self.acceptWebSocketRoute(http_request, request, route_item, &params);
+        const route_matches = self.websocket_route_tree.matches(request.path, self.path_convertors.items);
+        const route_index = route_matches.first_any orelse return false;
+        const route_item = &self.websocket_routes.items[route_index];
+        var params = std.StringHashMap([]const u8).init(self.allocator);
+        defer params.deinit();
+        for (request.host_params) |param| try params.put(param.name, param.value);
+        if (!(try matchPath(route_item.path, request.path, &params, self.path_convertors.items))) {
+            return error.InvalidRouteIndex;
         }
-
-        return false;
+        return try self.acceptWebSocketRoute(http_request, request, route_item, &params);
     }
 
-    fn acceptWebSocketRoute(self: *App, http_request: *std.http.Server.Request, request: Request, route_item: *const RegisteredWebSocketRoute, params: *std.StringHashMap([]const u8)) !bool {
+    fn acceptWebSocketRoute(self: *ZAPI, http_request: *std.http.Server.Request, request: Request, route_item: *const RegisteredWebSocketRoute, params: *std.StringHashMap([]const u8)) !bool {
         const upgrade = http_request.upgradeRequested();
         const key = switch (upgrade) {
             .websocket => |value| value orelse return self.respondWebSocketBadRequest(http_request),
@@ -6164,7 +5030,7 @@ pub const App = struct {
         return true;
     }
 
-    fn respondWebSocketUpgradeRequired(self: *App, http_request: *std.http.Server.Request) !bool {
+    fn respondWebSocketUpgradeRequired(self: *ZAPI, http_request: *std.http.Server.Request) !bool {
         try http_request.respond("WebSocket upgrade required", .{
             .status = .upgrade_required,
             .extra_headers = &.{
@@ -6176,7 +5042,7 @@ pub const App = struct {
         return true;
     }
 
-    fn respondWebSocketBadRequest(self: *App, http_request: *std.http.Server.Request) !bool {
+    fn respondWebSocketBadRequest(self: *ZAPI, http_request: *std.http.Server.Request) !bool {
         try http_request.respond("Missing Sec-WebSocket-Key", .{
             .status = .bad_request,
         });
@@ -6184,7 +5050,7 @@ pub const App = struct {
         return true;
     }
 
-    fn respondHttp(self: *App, http_request: *std.http.Server.Request, response: Response) !void {
+    fn respondHttp(self: *ZAPI, http_request: *std.http.Server.Request, response: Response) !void {
         const status_code = response.status.code();
         if (status_code < 100 or response.status == .continue_ or status_code > 999) return error.InvalidResponseStatus;
 
@@ -6225,7 +5091,7 @@ pub const App = struct {
         });
     }
 
-    fn finalizeResponse(self: *App, response: *Response) !void {
+    fn finalizeResponse(self: *ZAPI, response: *Response) !void {
         if (!contentLengthAllowed(response.status)) {
             response.removeHeader(self.allocator, "content-length");
             return;
@@ -6241,7 +5107,7 @@ pub const App = struct {
         try response.setHeader(self.allocator, "content-length", content_length);
     }
 
-    fn finalizeResponseForRequest(self: *App, request: Request, response: *Response) !void {
+    fn finalizeResponseForRequest(self: *ZAPI, request: Request, response: *Response) !void {
         try self.finalizeResponseForTransport(response);
         if (request.method == .HEAD) {
             response.body.clearRetainingCapacity();
@@ -6249,7 +5115,7 @@ pub const App = struct {
         }
     }
 
-    fn finalizeResponseForTransport(self: *App, response: *Response) !void {
+    fn finalizeResponseForTransport(self: *ZAPI, response: *Response) !void {
         try self.finalizeResponse(response);
         if (!responseBodyAllowed(response.status)) {
             response.body.clearRetainingCapacity();
@@ -6257,7 +5123,7 @@ pub const App = struct {
         }
     }
 
-    pub fn serve(self: *App, io: std.Io, address: std.Io.net.IpAddress, options: ServeOptions) !void {
+    pub fn serve(self: *ZAPI, io: std.Io, address: std.Io.net.IpAddress, options: ServeOptions) !void {
         try self.startup();
         defer self.shutdown() catch {};
 
@@ -6271,7 +5137,7 @@ pub const App = struct {
         });
     }
 
-    pub fn serveListener(self: *App, io: std.Io, listener: *std.Io.net.Server, options: ServeListenerOptions) !void {
+    pub fn serveListener(self: *ZAPI, io: std.Io, listener: *std.Io.net.Server, options: ServeListenerOptions) !void {
         const previous_io = self.options.io;
         if (self.options.io == null) self.options.io = io;
         defer self.options.io = previous_io;
@@ -6303,7 +5169,7 @@ pub const App = struct {
         return false;
     }
 
-    fn handleStream(self: *App, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) !void {
+    fn handleStream(self: *ZAPI, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) !void {
         var read_buffer: [8192]u8 = undefined;
         var write_buffer: [8192]u8 = undefined;
         var connection_reader = stream.reader(io, &read_buffer);
@@ -6323,7 +5189,7 @@ pub const App = struct {
         }
     }
 
-    fn handleStreamAndClose(self: *App, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) std.Io.Cancelable!void {
+    fn handleStreamAndClose(self: *ZAPI, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) std.Io.Cancelable!void {
         defer stream.close(io);
         self.handleStream(io, stream, buffer_request_body) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
@@ -6331,16 +5197,16 @@ pub const App = struct {
         };
     }
 
-    fn problem(self: *App, status: Status, detail: []const u8) !Response {
+    fn problem(self: *ZAPI, status: Status, detail: []const u8) !Response {
         return self.problemForRequest(Request.init(.GET, "/"), status, detail);
     }
 
-    fn problemForRequest(self: *App, request: Request, status: Status, detail: []const u8) !Response {
+    fn problemForRequest(self: *ZAPI, request: Request, status: Status, detail: []const u8) !Response {
         if (try self.handleStatus(request, status, detail)) |response| return response;
         return self.defaultProblem(status, detail);
     }
 
-    fn handleStatus(self: *App, request: Request, status: Status, detail: []const u8) !?Response {
+    fn handleStatus(self: *ZAPI, request: Request, status: Status, detail: []const u8) !?Response {
         for (self.status_handlers.items) |item| {
             if (item.status != status) continue;
             var ctx = StatusHandlerContext{
@@ -6354,7 +5220,7 @@ pub const App = struct {
         return null;
     }
 
-    fn defaultProblem(self: *App, status: Status, detail: []const u8) !Response {
+    fn defaultProblem(self: *ZAPI, status: Status, detail: []const u8) !Response {
         var response = Response.init(status);
         var payload = try problemPayload(self.allocator, status, detail);
         defer payload.deinit(self.allocator);
@@ -6363,30 +5229,30 @@ pub const App = struct {
         return response;
     }
 
-    fn unauthorized(self: *App, www_authenticate: ?[]const u8) !Response {
+    fn unauthorized(self: *ZAPI, www_authenticate: ?[]const u8) !Response {
         return self.unauthorizedForRequest(Request.init(.GET, "/"), www_authenticate);
     }
 
-    fn unauthorizedForRequest(self: *App, request: Request, www_authenticate: ?[]const u8) !Response {
+    fn unauthorizedForRequest(self: *ZAPI, request: Request, www_authenticate: ?[]const u8) !Response {
         var response = try self.problemForRequest(request, .unauthorized, "Unauthorized");
         if (www_authenticate) |value| try response.setHeader(self.allocator, "www-authenticate", value);
         return response;
     }
 
-    fn methodNotAllowed(self: *App, request: Request, allowed_methods: []const Method) !Response {
+    fn methodNotAllowed(self: *ZAPI, request: Request, allowed_methods: []const Method) !Response {
         var response = try self.problemForRequest(request, .method_not_allowed, "Method not allowed");
         try self.setAllowHeader(&response, allowed_methods);
         return response;
     }
 
-    fn automaticOptions(self: *App, request: Request, allowed_methods: []const Method) !Response {
+    fn automaticOptions(self: *ZAPI, request: Request, allowed_methods: []const Method) !Response {
         _ = request;
         var response = Response.init(.ok);
         try self.setAllowHeader(&response, allowed_methods);
         return response;
     }
 
-    fn setAllowHeader(self: *App, response: *Response, allowed_methods: []const Method) !void {
+    fn setAllowHeader(self: *ZAPI, response: *Response, allowed_methods: []const Method) !void {
         var allow = std.Io.Writer.Allocating.init(self.allocator);
         defer allow.deinit();
 
@@ -6398,7 +5264,7 @@ pub const App = struct {
         try response.setHeader(self.allocator, "allow", allow.written());
     }
 
-    fn redirectSlash(self: *App, request: Request) !?Response {
+    fn redirectSlash(self: *ZAPI, request: Request) !?Response {
         const alternate_path = if (std.mem.eql(u8, request.path, "/"))
             return null
         else if (std.mem.endsWith(u8, request.path, "/"))
@@ -6407,33 +5273,26 @@ pub const App = struct {
             try std.fmt.allocPrint(self.allocator, "{s}/", .{request.path});
         defer if (!std.mem.endsWith(u8, request.path, "/")) self.allocator.free(alternate_path);
 
-        for (self.routes.items) |route_item| {
-            var params = std.StringHashMap([]const u8).init(self.allocator);
-            defer params.deinit();
+        if (self.route_tree.matches(alternate_path, self.path_convertors.items).first_any == null) return null;
 
-            if (!(try matchPath(route_item.path, alternate_path, &params, self.path_convertors.items))) continue;
-
-            var location = std.Io.Writer.Allocating.init(self.allocator);
-            defer location.deinit();
-            if (request.root_path.len > 0) {
-                const mounted_location = try joinPaths(self.allocator, request.root_path, alternate_path);
-                defer self.allocator.free(mounted_location);
-                try location.writer.writeAll(mounted_location);
-            } else {
-                try location.writer.writeAll(alternate_path);
-            }
-            if (request.query.len > 0) {
-                try location.writer.writeAll("?");
-                try location.writer.writeAll(request.query);
-            }
-
-            return try self.redirect(location.written(), .temporary_redirect);
+        var location = std.Io.Writer.Allocating.init(self.allocator);
+        defer location.deinit();
+        if (request.root_path.len > 0) {
+            const mounted_location = try joinPaths(self.allocator, request.root_path, alternate_path);
+            defer self.allocator.free(mounted_location);
+            try location.writer.writeAll(mounted_location);
+        } else {
+            try location.writer.writeAll(alternate_path);
+        }
+        if (request.query.len > 0) {
+            try location.writer.writeAll("?");
+            try location.writer.writeAll(request.query);
         }
 
-        return null;
+        return try self.redirect(location.written(), .temporary_redirect);
     }
 
-    fn redirect(self: *App, location: []const u8, status: Status) !Response {
+    fn redirect(self: *ZAPI, location: []const u8, status: Status) !Response {
         var response = Response.init(status);
         const quoted = try quoteRedirectLocation(self.allocator, location);
         defer self.allocator.free(quoted);
@@ -6441,7 +5300,7 @@ pub const App = struct {
         return response;
     }
 
-    pub fn openapiJson(self: *App) ![]u8 {
+    pub fn openapiJson(self: *ZAPI) ![]u8 {
         var out = std.Io.Writer.Allocating.init(self.allocator);
         errdefer out.deinit();
         try writeOpenApi(self.allocator, &out.writer, self, "");
@@ -6861,799 +5720,44 @@ fn fileResponseContentType(file_response: File) []const u8 {
     return staticContentType(file_response.path);
 }
 
-fn staticFileRoot(ctx: *Context) !ResponsePayload {
-    return serveStaticFile(ctx, "");
-}
-
-fn staticFilePath(ctx: *Context) !ResponsePayload {
-    return serveStaticFile(ctx, ctx.pathValue("path") orelse "");
-}
-
-const StaticPath = struct {
-    value: []const u8,
-    owned: bool = false,
-};
-
-fn serveStaticFile(ctx: *Context, raw_path: []const u8) !ResponsePayload {
-    const state = ctx.state(StaticFilesState);
-    const io = ctx.io orelse return error.MissingIo;
-    const target = staticFileTargetPath(ctx.allocator, raw_path, state.html) catch return staticNotFound(ctx, state, io);
-    defer if (target.owned) ctx.allocator.free(target.value);
-
-    return serveStaticFileTarget(ctx, state, io, target.value, null) catch |err| switch (err) {
-        error.IsDir => {
-            if (try staticHtmlDirectoryHasIndex(ctx, state, io, raw_path)) {
-                return staticDirectoryRedirect(ctx);
-            }
-            return staticNotFound(ctx, state, io);
-        },
-        error.AccessDenied, error.PermissionDenied => return staticUnauthorized(),
-        error.FileNotFound, error.NotDir, error.SymLinkLoop => return staticNotFound(ctx, state, io),
-        else => return err,
-    };
-}
-
-fn serveStaticFileTarget(ctx: *Context, state: *StaticFilesState, io: std.Io, path: []const u8, status_override: ?Status) !ResponsePayload {
-    var file = try state.dir.openFile(io, path, .{
-        .allow_directory = false,
-        .follow_symlinks = state.follow_symlinks,
-        .resolve_beneath = true,
-    });
-    defer file.close(io);
-    const stat = try file.stat(io);
-    if (stat.kind != .file) return error.IsDir;
-    const full_len = try statFileSize(stat);
-    const last_modified_seconds = timestampSeconds(stat.mtime);
-    const last_modified = try httpDateAlloc(ctx.allocator, last_modified_seconds);
-    defer ctx.allocator.free(last_modified);
-
-    const etag = try fileResponseEtag(ctx.allocator, stat);
-    defer ctx.allocator.free(etag);
-
-    const conditional = status_override == null;
-    const not_modified = conditional and requestNotModified(ctx.request, etag, last_modified_seconds);
-    var range_decision = if (conditional and !not_modified) try requestByteRange(ctx.allocator, ctx.request, etag, last_modified_seconds, full_len) else ByteRangeDecision.none;
-    defer range_decision.deinit(ctx.allocator);
-    switch (range_decision) {
-        .malformed => |message| return .{
-            .status = .bad_request,
-            .content_type = "text/plain; charset=utf-8",
-            .body = message,
-        },
-        else => {},
-    }
-    const status: ?Status = if (not_modified) .not_modified else switch (range_decision) {
-        .none => status_override,
-        .partial => .partial_content,
-        .multiple => .partial_content,
-        .unsatisfiable => .requested_range_not_satisfiable,
-        .malformed => unreachable,
-    };
-
-    const file_content_type = staticContentType(path);
-    const response_content_type = responseFileContentType(file_content_type, range_decision);
-    var body: []const u8 = "";
-    var owned_body = false;
-    const body_len = switch (range_decision) {
-        .none => if (not_modified or ctx.request.method == .HEAD) full_len else full_len,
-        .partial => |range| range.len(),
-        .multiple => |ranges| multipartByteRangesLength(ranges, multipart_range_boundary, file_content_type, full_len),
-        .unsatisfiable => 0,
-        .malformed => unreachable,
-    };
-
-    if (!not_modified and ctx.request.method != .HEAD and range_decision != .unsatisfiable) {
-        var file_reader = file.reader(io, &.{});
-        var file_body = try file_reader.interface.allocRemaining(ctx.allocator, state.max_size);
-        errdefer ctx.allocator.free(file_body);
-        switch (range_decision) {
-            .multiple => |ranges| {
-                const multipart_body = try multipartByteRangesBodyAlloc(ctx.allocator, file_body, ranges, multipart_range_boundary, file_content_type, full_len);
-                ctx.allocator.free(file_body);
-                body = multipart_body;
-                owned_body = true;
-            },
-            else => {
-                file_body = try applyByteRange(ctx.allocator, file_body, range_decision);
-                body = file_body;
-                owned_body = true;
-            },
-        }
-    }
-
-    const headers = try responseFileHeaders(ctx.allocator, &.{}, body_len, full_len, etag, last_modified, null, .attachment, status orelse .ok, range_decision);
-    errdefer freeOwnedHeaders(ctx.allocator, headers);
-
-    return .{
-        .status = status,
-        .content_type = response_content_type,
-        .headers = headers,
-        .owned_headers = true,
-        .body = body,
-        .owned_body = owned_body,
-    };
-}
-
-const ByteRange = struct {
-    start: usize,
-    end: usize,
-
-    fn len(self: ByteRange) usize {
-        return self.end - self.start + 1;
-    }
-};
-
-const ByteRangeDecision = union(enum) {
-    none,
-    partial: ByteRange,
-    multiple: []const ByteRange,
-    unsatisfiable,
-    malformed: []const u8,
-
-    fn deinit(self: ByteRangeDecision, allocator: std.mem.Allocator) void {
-        switch (self) {
-            .multiple => |ranges| allocator.free(ranges),
-            else => {},
-        }
-    }
-};
-
-const multipart_range_boundary = "zapi-boundary";
-
-fn responseFileContentType(file_content_type: []const u8, range_decision: ByteRangeDecision) []const u8 {
-    return switch (range_decision) {
-        .multiple => multipartByteRangesContentType(),
-        else => file_content_type,
-    };
-}
-
-fn multipartByteRangesContentType() []const u8 {
-    return "multipart/byteranges; boundary=" ++ multipart_range_boundary;
-}
-
-fn responseFileHeaders(allocator: std.mem.Allocator, source_headers: []const HeaderField, body_len: usize, full_len: usize, etag: []const u8, last_modified: []const u8, filename: ?[]const u8, content_disposition: ContentDisposition, status: Status, range_decision: ByteRangeDecision) ![]HeaderField {
-    if (filename) |value| {
-        if (std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidHeader;
-    }
-
-    const not_modified = status == .not_modified;
-    const range_response = status == .partial_content or status == .requested_range_not_satisfiable;
-    const content_range_header = switch (range_decision) {
-        .partial, .unsatisfiable => true,
-        else => false,
-    };
-    const generated_accept_ranges = headerValue(source_headers, "accept-ranges") == null;
-    const generated_content_disposition = filename != null and !not_modified and headerValue(source_headers, "content-disposition") == null;
-
-    var skipped: usize = 0;
-    for (source_headers) |header| {
-        if (std.ascii.eqlIgnoreCase(header.name, "content-length")) {
-            skipped += 1;
-            continue;
-        }
-        if (std.ascii.eqlIgnoreCase(header.name, "etag")) {
-            skipped += 1;
-            continue;
-        }
-        if (std.ascii.eqlIgnoreCase(header.name, "last-modified")) {
-            skipped += 1;
-            continue;
-        }
-        if (generated_accept_ranges and std.ascii.eqlIgnoreCase(header.name, "accept-ranges")) {
-            skipped += 1;
-            continue;
-        }
-        if (range_response and std.ascii.eqlIgnoreCase(header.name, "content-range")) {
-            skipped += 1;
-            continue;
-        }
-        if ((generated_content_disposition or not_modified) and std.ascii.eqlIgnoreCase(header.name, "content-disposition")) {
-            skipped += 1;
-            continue;
-        }
-    }
-
-    const extra_count: usize = 2 +
-        (if (generated_accept_ranges) @as(usize, 1) else 0) +
-        (if (!not_modified) @as(usize, 1) else 0) +
-        (if (content_range_header) @as(usize, 1) else 0) +
-        (if (generated_content_disposition) @as(usize, 1) else 0);
-    var headers = try allocator.alloc(HeaderField, source_headers.len - skipped + extra_count);
-
-    var i: usize = 0;
-    errdefer freeOwnedHeaders(allocator, headers[0..i]);
-
-    for (source_headers) |header| {
-        if (std.ascii.eqlIgnoreCase(header.name, "content-length")) continue;
-        if (std.ascii.eqlIgnoreCase(header.name, "etag")) continue;
-        if (std.ascii.eqlIgnoreCase(header.name, "last-modified")) continue;
-        if (generated_accept_ranges and std.ascii.eqlIgnoreCase(header.name, "accept-ranges")) continue;
-        if (range_response and std.ascii.eqlIgnoreCase(header.name, "content-range")) continue;
-        if ((generated_content_disposition or not_modified) and std.ascii.eqlIgnoreCase(header.name, "content-disposition")) continue;
-        const owned_name = try allocator.dupe(u8, header.name);
-        const owned_value = allocator.dupe(u8, header.value) catch |err| {
-            allocator.free(owned_name);
-            return err;
-        };
-        headers[i] = .{
-            .name = owned_name,
-            .value = owned_value,
-        };
-        i += 1;
-    }
-
-    if (!not_modified) {
-        const content_length_name = try allocator.dupe(u8, "content-length");
-        const content_length_value = std.fmt.allocPrint(allocator, "{d}", .{body_len}) catch |err| {
-            allocator.free(content_length_name);
-            return err;
-        };
-        headers[i] = .{
-            .name = content_length_name,
-            .value = content_length_value,
-        };
-        i += 1;
-    }
-
-    const etag_name = try allocator.dupe(u8, "etag");
-    const etag_value = allocator.dupe(u8, etag) catch |err| {
-        allocator.free(etag_name);
-        return err;
-    };
-    headers[i] = .{
-        .name = etag_name,
-        .value = etag_value,
-    };
-    i += 1;
-
-    if (generated_accept_ranges) {
-        const accept_ranges_name = try allocator.dupe(u8, "accept-ranges");
-        const accept_ranges_value = allocator.dupe(u8, "bytes") catch |err| {
-            allocator.free(accept_ranges_name);
-            return err;
-        };
-        headers[i] = .{
-            .name = accept_ranges_name,
-            .value = accept_ranges_value,
-        };
-        i += 1;
-    }
-
-    switch (range_decision) {
-        .none => {},
-        .malformed => unreachable,
-        .multiple => {},
-        .partial => |range| {
-            const content_range_name = try allocator.dupe(u8, "content-range");
-            const content_range_value = std.fmt.allocPrint(allocator, "bytes {d}-{d}/{d}", .{ range.start, range.end, full_len }) catch |err| {
-                allocator.free(content_range_name);
-                return err;
-            };
-            headers[i] = .{
-                .name = content_range_name,
-                .value = content_range_value,
-            };
-            i += 1;
-        },
-        .unsatisfiable => {
-            const content_range_name = try allocator.dupe(u8, "content-range");
-            const content_range_value = std.fmt.allocPrint(allocator, "bytes */{d}", .{full_len}) catch |err| {
-                allocator.free(content_range_name);
-                return err;
-            };
-            headers[i] = .{
-                .name = content_range_name,
-                .value = content_range_value,
-            };
-            i += 1;
-        },
-    }
-
-    const last_modified_name = try allocator.dupe(u8, "last-modified");
-    const last_modified_value = allocator.dupe(u8, last_modified) catch |err| {
-        allocator.free(last_modified_name);
-        return err;
-    };
-    headers[i] = .{
-        .name = last_modified_name,
-        .value = last_modified_value,
-    };
-    i += 1;
-
-    if (filename) |value| if (generated_content_disposition) {
-        const disposition_name = try allocator.dupe(u8, "content-disposition");
-        const disposition_value = fileContentDispositionAlloc(allocator, value, content_disposition) catch |err| {
-            allocator.free(disposition_name);
-            return err;
-        };
-        headers[i] = .{
-            .name = disposition_name,
-            .value = disposition_value,
-        };
-    };
-
-    return headers;
-}
-
-fn fileContentDispositionAlloc(allocator: std.mem.Allocator, filename: []const u8, disposition: ContentDisposition) ![]u8 {
-    if (quotedFilenameSafe(filename)) {
-        return std.fmt.allocPrint(allocator, "{s}; filename=\"{s}\"", .{ disposition.text(), filename });
-    }
-
-    const encoded = try percentEncodeFilenameAlloc(allocator, filename);
-    defer allocator.free(encoded);
-    return std.fmt.allocPrint(allocator, "{s}; filename*=utf-8''{s}", .{ disposition.text(), encoded });
-}
-
-fn quotedFilenameSafe(filename: []const u8) bool {
-    if (filename.len == 0) return true;
-    for (filename) |byte| {
-        if (byte < 0x20 or byte >= 0x7f) return false;
-        if (byte == '"' or byte == '\\') return false;
-    }
-    return true;
-}
-
-fn percentEncodeFilenameAlloc(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
-    var writer = std.Io.Writer.Allocating.init(allocator);
-    errdefer writer.deinit();
-    const hex = "0123456789ABCDEF";
-    for (filename) |byte| {
-        if (filenameAttrChar(byte)) {
-            try writer.writer.writeByte(byte);
-        } else {
-            try writer.writer.writeByte('%');
-            try writer.writer.writeByte(hex[byte >> 4]);
-            try writer.writer.writeByte(hex[byte & 0x0f]);
-        }
-    }
-    return writer.toOwnedSlice();
-}
-
-fn filenameAttrChar(byte: u8) bool {
-    return switch (byte) {
-        'a'...'z', 'A'...'Z', '0'...'9', '!', '#', '$', '&', '+', '-', '.', '^', '_', '`', '|', '~' => true,
-        else => false,
-    };
-}
-
-fn statFileSize(stat: std.Io.Dir.Stat) !usize {
-    return std.math.cast(usize, stat.size) orelse error.FileTooBig;
-}
-
-fn fileResponseEtag(allocator: std.mem.Allocator, stat: std.Io.Dir.Stat) ![]u8 {
-    return std.fmt.allocPrint(allocator, "\"{d}-{d}\"", .{ stat.mtime.nanoseconds, stat.size });
-}
-
-fn requestEtagMatches(request: Request, etag: []const u8) bool {
-    const header = request.header("if-none-match") orelse return false;
-    var it = std.mem.splitScalar(u8, header, ',');
-    while (it.next()) |raw_value| {
-        const value = std.mem.trim(u8, raw_value, " \t");
-        if (std.mem.eql(u8, value, "*")) return true;
-        if (etagWeakEquals(value, etag)) return true;
-    }
-    return false;
-}
-
-fn etagWeakEquals(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, weakEtagValue(a), weakEtagValue(b));
-}
-
-fn weakEtagValue(value: []const u8) []const u8 {
-    const trimmed = std.mem.trim(u8, value, " \t");
-    if (trimmed.len >= 2 and (trimmed[0] == 'W' or trimmed[0] == 'w') and trimmed[1] == '/') {
-        return std.mem.trim(u8, trimmed[2..], " \t");
-    }
-    return trimmed;
-}
-
-fn requestNotModified(request: Request, etag: []const u8, last_modified_seconds: i64) bool {
-    return requestValidatorsNotModified(request, etag, last_modified_seconds);
-}
-
-fn requestValidatorsNotModified(request: Request, etag: ?[]const u8, last_modified_seconds: ?i64) bool {
-    if (request.header("if-none-match") != null) {
-        const value = etag orelse return false;
-        return requestEtagMatches(request, value);
-    }
-
-    return requestModifiedSince(request, last_modified_seconds orelse return false);
-}
-
-fn requestModifiedSince(request: Request, last_modified_seconds: i64) bool {
-    const header = request.header("if-modified-since") orelse return false;
-    const modified_since_seconds = parseHttpDate(header) orelse return false;
-    return modified_since_seconds >= last_modified_seconds;
-}
-
-fn requestByteRange(allocator: std.mem.Allocator, request: Request, etag: []const u8, last_modified_seconds: i64, full_len: usize) !ByteRangeDecision {
-    const header = request.header("range") orelse return .none;
-    if (request.header("if-range")) |if_range| {
-        const trimmed = std.mem.trim(u8, if_range, " \t");
-        if (std.mem.startsWith(u8, trimmed, "\"")) {
-            if (!std.mem.eql(u8, trimmed, etag)) return .none;
-        } else if (parseHttpDate(trimmed)) |seconds| {
-            if (seconds < last_modified_seconds) return .none;
-        } else {
-            return .none;
-        }
-    }
-
-    return parseByteRange(allocator, header, full_len);
-}
-
-fn parseByteRange(allocator: std.mem.Allocator, header: []const u8, full_len: usize) !ByteRangeDecision {
-    const value = std.mem.trim(u8, header, " \t");
-    const equals = std.mem.indexOfScalar(u8, value, '=') orelse return .{ .malformed = "Malformed range header." };
-    const units = std.mem.trim(u8, value[0..equals], " \t");
-    if (!std.ascii.eqlIgnoreCase(units, "bytes")) return .{ .malformed = "Only support bytes range" };
-
-    const spec = std.mem.trim(u8, value[equals + 1 ..], " \t");
-    var ranges: std.ArrayList(ByteRange) = .empty;
-    defer ranges.deinit(allocator);
-
-    var it = std.mem.splitScalar(u8, spec, ',');
-    while (it.next()) |raw_part| {
-        const part = std.mem.trim(u8, raw_part, " \t");
-        if (part.len == 0 or std.mem.eql(u8, part, "-")) continue;
-        const dash = std.mem.indexOfScalar(u8, part, '-') orelse continue;
-        const start_text = std.mem.trim(u8, part[0..dash], " \t");
-        const end_text = std.mem.trim(u8, part[dash + 1 ..], " \t");
-        if (start_text.len == 0 and end_text.len == 0) continue;
-
-        const range = parseByteRangePart(start_text, end_text, full_len) catch continue;
-        try ranges.append(allocator, range);
-    }
-
-    if (ranges.items.len == 0) return .{ .malformed = "Range header: range must be requested" };
-    if (full_len == 0) return .unsatisfiable;
-
-    for (ranges.items) |range| {
-        if (range.start >= full_len) return .unsatisfiable;
-        if (range.start > range.end) return .{ .malformed = "Range header: start must be less than end" };
-    }
-
-    normalizeByteRanges(ranges.items);
-    const merged_len = mergeByteRanges(ranges.items);
-    if (merged_len == 1) return .{ .partial = ranges.items[0] };
-
-    const owned_ranges = try allocator.dupe(ByteRange, ranges.items[0..merged_len]);
-    return .{ .multiple = owned_ranges };
-}
-
-fn parseByteRangePart(start_text: []const u8, end_text: []const u8, full_len: usize) !ByteRange {
-    if (start_text.len == 0) {
-        const suffix_len = try std.fmt.parseInt(usize, end_text, 10);
-        if (full_len == 0) return .{ .start = 0, .end = 0 };
-        if (suffix_len == 0) return .{ .start = full_len, .end = full_len };
-        const start = if (suffix_len >= full_len) 0 else full_len - suffix_len;
-        return .{ .start = start, .end = full_len - 1 };
-    }
-
-    const start = try std.fmt.parseInt(usize, start_text, 10);
-    if (full_len == 0) {
-        const parsed_end = if (end_text.len == 0) start else try std.fmt.parseInt(usize, end_text, 10);
-        return .{ .start = start, .end = parsed_end };
-    }
-    const parsed_end = if (end_text.len == 0) full_len - 1 else try std.fmt.parseInt(usize, end_text, 10);
-    const end = if (parsed_end >= full_len) full_len - 1 else parsed_end;
-    return .{ .start = start, .end = end };
-}
-
-fn byteRangeLessThan(_: void, a: ByteRange, b: ByteRange) bool {
-    if (a.start == b.start) return a.end < b.end;
-    return a.start < b.start;
-}
-
-fn normalizeByteRanges(ranges: []ByteRange) void {
-    std.mem.sort(ByteRange, ranges, {}, byteRangeLessThan);
-}
-
-fn mergeByteRanges(ranges: []ByteRange) usize {
-    var write: usize = 1;
-    for (ranges[1..]) |range| {
-        const previous = &ranges[write - 1];
-        if (range.start <= previous.end + 1) {
-            previous.end = @max(previous.end, range.end);
-            continue;
-        }
-        ranges[write] = range;
-        write += 1;
-    }
-    return write;
-}
-
-fn applyByteRange(allocator: std.mem.Allocator, body: []u8, decision: ByteRangeDecision) ![]u8 {
-    switch (decision) {
-        .none => return body,
-        .malformed => unreachable,
-        .multiple => unreachable,
-        .unsatisfiable => {
-            allocator.free(body);
-            return allocator.dupe(u8, "");
-        },
-        .partial => |range| {
-            const range_body = try allocator.dupe(u8, body[range.start .. range.end + 1]);
-            allocator.free(body);
-            return range_body;
-        },
-    }
-}
-
-fn multipartByteRangesLength(ranges: []const ByteRange, boundary: []const u8, content_type: []const u8, full_len: usize) usize {
-    var len: usize = 0;
-    for (ranges) |range| {
-        len += std.fmt.count(
-            "--{s}\r\nContent-Type: {s}\r\nContent-Range: bytes {d}-{d}/{d}\r\n\r\n",
-            .{ boundary, content_type, range.start, range.end, full_len },
-        );
-        len += range.len();
-        len += "\r\n".len;
-    }
-    len += std.fmt.count("--{s}--", .{boundary});
-    return len;
-}
-
-fn multipartByteRangesBodyAlloc(allocator: std.mem.Allocator, body: []const u8, ranges: []const ByteRange, boundary: []const u8, content_type: []const u8, full_len: usize) ![]u8 {
-    var writer = std.Io.Writer.Allocating.init(allocator);
-    errdefer writer.deinit();
-
-    for (ranges) |range| {
-        try writer.writer.print(
-            "--{s}\r\nContent-Type: {s}\r\nContent-Range: bytes {d}-{d}/{d}\r\n\r\n",
-            .{ boundary, content_type, range.start, range.end, full_len },
-        );
-        try writer.writer.writeAll(body[range.start .. range.end + 1]);
-        try writer.writer.writeAll("\r\n");
-    }
-    try writer.writer.print("--{s}--", .{boundary});
-    return writer.toOwnedSlice();
-}
-
-fn timestampSeconds(timestamp: std.Io.Timestamp) i64 {
-    return @as(i64, @intCast(@divFloor(timestamp.nanoseconds, std.time.ns_per_s)));
-}
-
-fn httpDateAlloc(allocator: std.mem.Allocator, unix_seconds: i64) ![]u8 {
-    const epoch_seconds = std.time.epoch.EpochSeconds{
-        .secs = if (unix_seconds < 0) 0 else @as(u64, @intCast(unix_seconds)),
-    };
-    const epoch_day = epoch_seconds.getEpochDay();
-    const day_seconds = epoch_seconds.getDaySeconds();
-    const year_day = epoch_day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const weekday_index: usize = @intCast(@mod(epoch_day.day + 4, 7));
-
-    return std.fmt.allocPrint(
-        allocator,
-        "{s}, {d:0>2} {s} {d:0>4} {d:0>2}:{d:0>2}:{d:0>2} GMT",
-        .{
-            httpWeekdayName(weekday_index),
-            month_day.day_index + 1,
-            httpMonthName(month_day.month),
-            year_day.year,
-            day_seconds.getHoursIntoDay(),
-            day_seconds.getMinutesIntoHour(),
-            day_seconds.getSecondsIntoMinute(),
-        },
-    );
-}
-
-fn parseHttpDate(value: []const u8) ?i64 {
-    const date = std.mem.trim(u8, value, " \t");
-    if (date.len != 29) return null;
-    if (date[3] != ',' or date[4] != ' ' or date[7] != ' ' or date[11] != ' ' or date[16] != ' ' or date[19] != ':' or date[22] != ':' or date[25] != ' ') return null;
-    if (!std.mem.eql(u8, date[26..29], "GMT")) return null;
-
-    const day = std.fmt.parseInt(u5, date[5..7], 10) catch return null;
-    const month_number = parseHttpMonth(date[8..11]) orelse return null;
-    const year = std.fmt.parseInt(std.time.epoch.Year, date[12..16], 10) catch return null;
-    const hour = std.fmt.parseInt(u5, date[17..19], 10) catch return null;
-    const minute = std.fmt.parseInt(u6, date[20..22], 10) catch return null;
-    const second = std.fmt.parseInt(u6, date[23..25], 10) catch return null;
-
-    if (year < std.time.epoch.epoch_year) return null;
-    if (hour > 23 or minute > 59 or second > 59) return null;
-
-    const month: std.time.epoch.Month = @enumFromInt(month_number);
-    const days_in_month = std.time.epoch.getDaysInMonth(year, month);
-    if (day == 0 or day > days_in_month) return null;
-
-    var days: u64 = 0;
-    var current_year: std.time.epoch.Year = std.time.epoch.epoch_year;
-    while (current_year < year) : (current_year += 1) {
-        days += std.time.epoch.getDaysInYear(current_year);
-    }
-
-    var current_month: std.time.epoch.Month = .jan;
-    while (@intFromEnum(current_month) < month_number) {
-        days += std.time.epoch.getDaysInMonth(year, current_month);
-        current_month = @enumFromInt(@intFromEnum(current_month) + 1);
-    }
-
-    days += day - 1;
-    const seconds = days * std.time.epoch.secs_per_day + @as(u64, hour) * 3600 + @as(u64, minute) * 60 + second;
-    return @intCast(seconds);
-}
-
-fn parseHttpMonth(value: []const u8) ?u4 {
-    if (std.mem.eql(u8, value, "Jan")) return 1;
-    if (std.mem.eql(u8, value, "Feb")) return 2;
-    if (std.mem.eql(u8, value, "Mar")) return 3;
-    if (std.mem.eql(u8, value, "Apr")) return 4;
-    if (std.mem.eql(u8, value, "May")) return 5;
-    if (std.mem.eql(u8, value, "Jun")) return 6;
-    if (std.mem.eql(u8, value, "Jul")) return 7;
-    if (std.mem.eql(u8, value, "Aug")) return 8;
-    if (std.mem.eql(u8, value, "Sep")) return 9;
-    if (std.mem.eql(u8, value, "Oct")) return 10;
-    if (std.mem.eql(u8, value, "Nov")) return 11;
-    if (std.mem.eql(u8, value, "Dec")) return 12;
-    return null;
-}
-
-fn httpMonthName(month: std.time.epoch.Month) []const u8 {
-    return switch (month) {
-        .jan => "Jan",
-        .feb => "Feb",
-        .mar => "Mar",
-        .apr => "Apr",
-        .may => "May",
-        .jun => "Jun",
-        .jul => "Jul",
-        .aug => "Aug",
-        .sep => "Sep",
-        .oct => "Oct",
-        .nov => "Nov",
-        .dec => "Dec",
-    };
-}
-
-fn httpWeekdayName(index: usize) []const u8 {
-    return switch (index) {
-        0 => "Sun",
-        1 => "Mon",
-        2 => "Tue",
-        3 => "Wed",
-        4 => "Thu",
-        5 => "Fri",
-        6 => "Sat",
-        else => unreachable,
-    };
-}
-
-fn freeOwnedHeaders(allocator: std.mem.Allocator, headers: []const HeaderField) void {
-    for (headers) |header| {
-        allocator.free(header.name);
-        allocator.free(header.value);
-    }
-    allocator.free(headers);
-}
-
-fn staticNotFound(ctx: *Context, state: *StaticFilesState, io: std.Io) !ResponsePayload {
-    if (state.html) {
-        if (serveStaticFileTarget(ctx, state, io, "404.html", .not_found)) |payload| {
-            return payload;
-        } else |err| switch (err) {
-            error.FileNotFound, error.IsDir, error.NotDir, error.AccessDenied, error.PermissionDenied => {},
-            else => return err,
-        }
-    }
-
-    return .{
-        .status = .not_found,
-        .content_type = "text/plain; charset=utf-8",
-        .body = "Not Found",
-    };
-}
-
-fn staticMethodNotAllowed(ctx: *StatusHandlerContext) !Response {
-    var response = Response.init(.method_not_allowed);
-    try response.setHeader(ctx.app.allocator, "content-type", "text/plain; charset=utf-8");
-    try response.body.appendSlice(ctx.app.allocator, "Method Not Allowed");
-    return response;
-}
-
-fn staticUnauthorized() ResponsePayload {
-    return .{
-        .status = .unauthorized,
-        .content_type = "text/plain; charset=utf-8",
-        .body = "Unauthorized",
-    };
-}
-
-fn staticHtmlDirectoryHasIndex(ctx: *Context, state: *StaticFilesState, io: std.Io, raw_path: []const u8) !bool {
-    if (!state.html or raw_path.len == 0 or std.mem.endsWith(u8, raw_path, "/")) return false;
-
-    const index_path = try std.fmt.allocPrint(ctx.allocator, "{s}/index.html", .{raw_path});
-    defer ctx.allocator.free(index_path);
-    _ = state.dir.statFile(io, index_path, .{}) catch |err| switch (err) {
-        error.FileNotFound, error.IsDir, error.NotDir, error.AccessDenied, error.PermissionDenied => return false,
-        else => return err,
-    };
-    return true;
-}
-
-fn staticDirectoryRedirect(ctx: *Context) !ResponsePayload {
-    var location = std.Io.Writer.Allocating.init(ctx.allocator);
-    defer location.deinit();
-
-    if (ctx.request.root_path.len > 0) try location.writer.writeAll(ctx.request.root_path);
-    try location.writer.writeAll(ctx.request.path);
-    try location.writer.writeAll("/");
-    if (ctx.request.query.len > 0) {
-        try location.writer.writeAll("?");
-        try location.writer.writeAll(ctx.request.query);
-    }
-
-    const headers = try ctx.allocator.alloc(HeaderField, 1);
-    errdefer ctx.allocator.free(headers);
-    headers[0] = try ownedRedirectLocationHeader(ctx.allocator, location.written());
-
-    return .{
-        .status = .temporary_redirect,
-        .content_type = "",
-        .headers = headers,
-        .owned_headers = true,
-    };
-}
-
-fn staticFileTargetPath(allocator: std.mem.Allocator, raw_path: []const u8, html: bool) !StaticPath {
-    if (raw_path.len == 0) {
-        if (!html) return error.InvalidStaticPath;
-        return .{ .value = "index.html" };
-    }
-
-    const decoded_path = percentDecodePath(allocator, raw_path) catch return error.InvalidStaticPath;
-    errdefer allocator.free(decoded_path);
-
-    if (std.fs.path.isAbsolute(decoded_path)) return error.InvalidStaticPath;
-    if (std.mem.indexOfScalar(u8, decoded_path, 0) != null) return error.InvalidStaticPath;
-    if (std.mem.indexOfScalar(u8, decoded_path, '\\') != null) return error.InvalidStaticPath;
-
-    const lookup_path = if (std.mem.endsWith(u8, decoded_path, "/")) blk: {
-        if (!html) return error.InvalidStaticPath;
-        break :blk decoded_path[0 .. decoded_path.len - 1];
-    } else decoded_path;
-    try validateStaticPathSegments(lookup_path);
-
-    if (std.mem.endsWith(u8, decoded_path, "/")) {
-        defer allocator.free(decoded_path);
-        return .{
-            .value = try std.fmt.allocPrint(allocator, "{s}/index.html", .{lookup_path}),
-            .owned = true,
-        };
-    }
-
-    return .{ .value = decoded_path, .owned = true };
-}
-
-fn validateStaticPathSegments(path: []const u8) !void {
-    var it = std.mem.splitScalar(u8, path, '/');
-    while (it.next()) |segment| {
-        if (segment.len == 0) return error.InvalidStaticPath;
-        if (std.mem.eql(u8, segment, ".") or std.mem.eql(u8, segment, "..")) return error.InvalidStaticPath;
-    }
-}
-
-fn staticContentType(path: []const u8) []const u8 {
-    const ext = std.fs.path.extension(path);
-    if (std.ascii.eqlIgnoreCase(ext, ".html") or std.ascii.eqlIgnoreCase(ext, ".htm")) return "text/html; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(ext, ".css")) return "text/css; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(ext, ".js") or std.ascii.eqlIgnoreCase(ext, ".mjs")) return "text/javascript; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(ext, ".json")) return "application/json";
-    if (std.ascii.eqlIgnoreCase(ext, ".txt")) return "text/plain; charset=utf-8";
-    if (std.ascii.eqlIgnoreCase(ext, ".png")) return "image/png";
-    if (std.ascii.eqlIgnoreCase(ext, ".jpg") or std.ascii.eqlIgnoreCase(ext, ".jpeg")) return "image/jpeg";
-    if (std.ascii.eqlIgnoreCase(ext, ".gif")) return "image/gif";
-    if (std.ascii.eqlIgnoreCase(ext, ".svg")) return "image/svg+xml";
-    if (std.ascii.eqlIgnoreCase(ext, ".webp")) return "image/webp";
-    if (std.ascii.eqlIgnoreCase(ext, ".ico")) return "image/x-icon";
-    if (std.ascii.eqlIgnoreCase(ext, ".wasm")) return "application/wasm";
-    if (std.ascii.eqlIgnoreCase(ext, ".pdf")) return "application/pdf";
-    return "application/octet-stream";
-}
+const StaticPath = static_files_mod.StaticPath;
+const ByteRange = static_files_mod.ByteRange;
+const ByteRangeDecision = static_files_mod.ByteRangeDecision;
+const multipart_range_boundary = static_files_mod.multipart_range_boundary;
+const responseFileContentType = static_files_mod.responseFileContentType;
+const multipartByteRangesContentType = static_files_mod.multipartByteRangesContentType;
+const responseFileHeaders = static_files_mod.responseFileHeaders;
+const fileContentDispositionAlloc = static_files_mod.fileContentDispositionAlloc;
+const quotedFilenameSafe = static_files_mod.quotedFilenameSafe;
+const percentEncodeFilenameAlloc = static_files_mod.percentEncodeFilenameAlloc;
+const filenameAttrChar = static_files_mod.filenameAttrChar;
+const statFileSize = static_files_mod.statFileSize;
+const fileResponseEtag = static_files_mod.fileResponseEtag;
+const requestEtagMatches = static_files_mod.requestEtagMatches;
+const etagWeakEquals = static_files_mod.etagWeakEquals;
+const weakEtagValue = static_files_mod.weakEtagValue;
+const requestNotModified = static_files_mod.requestNotModified;
+const requestValidatorsNotModified = static_files_mod.requestValidatorsNotModified;
+const requestModifiedSince = static_files_mod.requestModifiedSince;
+const requestByteRange = static_files_mod.requestByteRange;
+const parseByteRange = static_files_mod.parseByteRange;
+const parseByteRangePart = static_files_mod.parseByteRangePart;
+const byteRangeLessThan = static_files_mod.byteRangeLessThan;
+const normalizeByteRanges = static_files_mod.normalizeByteRanges;
+const mergeByteRanges = static_files_mod.mergeByteRanges;
+const applyByteRange = static_files_mod.applyByteRange;
+const multipartByteRangesLength = static_files_mod.multipartByteRangesLength;
+const multipartByteRangesBodyAlloc = static_files_mod.multipartByteRangesBodyAlloc;
+const timestampSeconds = static_files_mod.timestampSeconds;
+const httpDateAlloc = static_files_mod.httpDateAlloc;
+const parseHttpDate = static_files_mod.parseHttpDate;
+const parseHttpMonth = static_files_mod.parseHttpMonth;
+const httpMonthName = static_files_mod.httpMonthName;
+const httpWeekdayName = static_files_mod.httpWeekdayName;
+const freeOwnedHeaders = static_files_mod.freeOwnedHeaders;
+const staticFileTargetPath = static_files_mod.staticFileTargetPath;
+const validateStaticPathSegments = static_files_mod.validateStaticPathSegments;
+const staticContentType = static_files_mod.staticContentType;
 
 fn appendAllowedMethod(allocator: std.mem.Allocator, allowed_methods: *std.ArrayList(Method), method: Method) !void {
     if (method == .GET) {
@@ -7930,7 +6034,7 @@ fn corsSafelistedHeader(header: []const u8) bool {
     return false;
 }
 
-fn corsPreflightFailure(comptime options: CorsOptions, app: *App, detail: []const u8, allow_origin: ?[]const u8, requested_headers: ?[]const u8) !Response {
+fn corsPreflightFailure(comptime options: CorsOptions, app: *ZAPI, detail: []const u8, allow_origin: ?[]const u8, requested_headers: ?[]const u8) !Response {
     var response = Response.init(.bad_request);
     try response.setHeader(app.allocator, "content-type", "text/plain; charset=utf-8");
     try response.body.appendSlice(app.allocator, detail);
@@ -7938,7 +6042,7 @@ fn corsPreflightFailure(comptime options: CorsOptions, app: *App, detail: []cons
     return response;
 }
 
-fn addCorsHeaders(comptime options: CorsOptions, app: *App, response: *Response, allow_origin: []const u8, preflight: bool, requested_headers: ?[]const u8) !void {
+fn addCorsHeaders(comptime options: CorsOptions, app: *ZAPI, response: *Response, allow_origin: []const u8, preflight: bool, requested_headers: ?[]const u8) !void {
     try response.setHeader(app.allocator, "access-control-allow-origin", allow_origin);
     if (!std.mem.eql(u8, allow_origin, "*")) try addVaryHeader(app.allocator, response, "Origin");
     if (options.allow_credentials) try response.setHeader(app.allocator, "access-control-allow-credentials", "true");
@@ -7952,7 +6056,7 @@ fn addCorsHeaders(comptime options: CorsOptions, app: *App, response: *Response,
     }
 }
 
-fn addCorsPreflightHeaders(comptime options: CorsOptions, app: *App, response: *Response, allow_origin: ?[]const u8, requested_headers: ?[]const u8) !void {
+fn addCorsPreflightHeaders(comptime options: CorsOptions, app: *ZAPI, response: *Response, allow_origin: ?[]const u8, requested_headers: ?[]const u8) !void {
     if (allow_origin) |origin| {
         try response.setHeader(app.allocator, "access-control-allow-origin", origin);
         if (!std.mem.eql(u8, origin, "*")) try addVaryHeader(app.allocator, response, "Origin");
@@ -8115,7 +6219,7 @@ fn trustedHostMatches(pattern: []const u8, host: []const u8) bool {
     return false;
 }
 
-fn trustedHostRedirect(app: *App, request: Request, host_header: []const u8, redirect_host: []const u8) !Response {
+fn trustedHostRedirect(app: *ZAPI, request: Request, host_header: []const u8, redirect_host: []const u8) !Response {
     var location = std.Io.Writer.Allocating.init(app.allocator);
     defer location.deinit();
     try location.writer.writeAll(request.scheme);
@@ -8143,85 +6247,11 @@ fn trustedHostPortSuffix(host_header: []const u8) []const u8 {
     return "";
 }
 
-fn trustedHostFailure(app: *App) !Response {
+fn trustedHostFailure(app: *ZAPI) !Response {
     var response = Response.init(.bad_request);
     try response.setHeader(app.allocator, "content-type", "text/plain; charset=utf-8");
     try response.body.appendSlice(app.allocator, "Invalid host header");
     return response;
-}
-
-pub fn makeSetCookieHeader(allocator: std.mem.Allocator, name: []const u8, value: []const u8, options: CookieOptions) !HeaderField {
-    try validateCookieToken(name);
-    try validateCookieValue(value);
-
-    var out = std.Io.Writer.Allocating.init(allocator);
-    errdefer out.deinit();
-
-    try out.writer.writeAll(name);
-    try out.writer.writeAll("=");
-    try out.writer.writeAll(value);
-
-    if (options.max_age) |max_age| try out.writer.print("; Max-Age={d}", .{max_age});
-    if (options.expires) |expires| {
-        try validateCookieAttributeValue(expires);
-        try out.writer.writeAll("; Expires=");
-        try out.writer.writeAll(expires);
-    }
-    if (options.path) |path| {
-        try validateCookieAttributeValue(path);
-        try out.writer.writeAll("; Path=");
-        try out.writer.writeAll(path);
-    }
-    if (options.domain) |domain| {
-        try validateCookieAttributeValue(domain);
-        try out.writer.writeAll("; Domain=");
-        try out.writer.writeAll(domain);
-    }
-    if (options.secure) try out.writer.writeAll("; Secure");
-    if (options.http_only) try out.writer.writeAll("; HttpOnly");
-    if (options.same_site) |same_site| {
-        try out.writer.writeAll("; SameSite=");
-        try out.writer.writeAll(same_site.text());
-    }
-    if (options.partitioned) try out.writer.writeAll("; Partitioned");
-
-    const owned_name = try allocator.dupe(u8, "set-cookie");
-    errdefer allocator.free(owned_name);
-    const owned_value = try out.toOwnedSlice();
-    return .{
-        .name = owned_name,
-        .value = owned_value,
-    };
-}
-
-pub fn makeDeleteCookieHeader(allocator: std.mem.Allocator, name: []const u8, options: CookieOptions) !HeaderField {
-    var delete_options = options;
-    delete_options.max_age = 0;
-    delete_options.expires = "Thu, 01 Jan 1970 00:00:00 GMT";
-    return makeSetCookieHeader(allocator, name, "", delete_options);
-}
-
-fn validateCookieToken(value: []const u8) !void {
-    if (value.len == 0) return error.InvalidCookie;
-    for (value) |ch| {
-        switch (ch) {
-            0x21, 0x23...0x27, 0x2a...0x2b, 0x2d...0x2e, 0x30...0x39, 0x41...0x5a, 0x5e...0x7a, 0x7c, 0x7e => {},
-            else => return error.InvalidCookie,
-        }
-    }
-}
-
-fn validateCookieValue(value: []const u8) !void {
-    for (value) |ch| {
-        switch (ch) {
-            0x21, 0x23...0x2b, 0x2d...0x3a, 0x3c...0x5b, 0x5d...0x7e => {},
-            else => return error.InvalidCookie,
-        }
-    }
-}
-
-fn validateCookieAttributeValue(value: []const u8) !void {
-    if (std.mem.indexOfAny(u8, value, "\r\n;") != null) return error.InvalidCookie;
 }
 
 fn routeMetadata(comptime method: Method, comptime path: []const u8, comptime Handler: type, comptime options: anytype) RouteMetadata {
@@ -9199,182 +7229,12 @@ fn hexEncodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return encoded;
 }
 
-pub const FormValue = union(enum) {
-    text: []const u8,
-    file: UploadFile,
-};
-
-pub const FormField = struct {
-    name: []const u8,
-    value: FormValue,
-};
-
-const FormFieldValues = struct {
-    items: std.ArrayList(FormValue) = .empty,
-    owned_text: std.ArrayList(bool) = .empty,
-};
-
-pub const FormData = struct {
-    allocator: std.mem.Allocator,
-    values: std.StringHashMap(FormFieldValues),
-    ordered_items: std.ArrayList(FormField) = .empty,
-    owned: bool = true,
-
-    pub fn init(allocator: std.mem.Allocator) FormData {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap(FormFieldValues).init(allocator),
-        };
-    }
-
-    fn initBorrowed(allocator: std.mem.Allocator) FormData {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap(FormFieldValues).init(allocator),
-            .owned = false,
-        };
-    }
-
-    pub fn deinit(self: *FormData) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            if (self.owned) {
-                self.allocator.free(entry.key_ptr.*);
-                for (entry.value_ptr.items.items, 0..) |value, i| {
-                    if (entry.value_ptr.owned_text.items[i]) {
-                        switch (value) {
-                            .text => |text| self.allocator.free(text),
-                            .file => {},
-                        }
-                    }
-                }
-            }
-            entry.value_ptr.items.deinit(self.allocator);
-            entry.value_ptr.owned_text.deinit(self.allocator);
-        }
-        self.values.deinit();
-        if (self.owned) {
-            for (self.ordered_items.items) |item| {
-                self.allocator.free(item.name);
-            }
-        }
-        self.ordered_items.deinit(self.allocator);
-    }
-
-    fn append(self: *FormData, key: []const u8, value: FormValue, owned_text: bool) !void {
-        const ordered_name = try self.allocator.dupe(u8, key);
-        errdefer self.allocator.free(ordered_name);
-
-        const entry = try self.values.getOrPut(key);
-        var inserted = false;
-        errdefer if (inserted) {
-            entry.value_ptr.items.deinit(self.allocator);
-            entry.value_ptr.owned_text.deinit(self.allocator);
-            self.allocator.free(entry.key_ptr.*);
-            _ = self.values.remove(key);
-        };
-
-        if (!entry.found_existing) {
-            entry.key_ptr.* = try self.allocator.dupe(u8, key);
-            entry.value_ptr.* = .{};
-            inserted = true;
-        }
-        try entry.value_ptr.items.append(self.allocator, value);
-        errdefer _ = entry.value_ptr.items.pop();
-        try entry.value_ptr.owned_text.append(self.allocator, owned_text);
-        errdefer _ = entry.value_ptr.owned_text.pop();
-        try self.ordered_items.append(self.allocator, .{ .name = ordered_name, .value = value });
-    }
-
-    pub fn get(self: *FormData, key: []const u8) ?FormValue {
-        const values = self.getAll(key) orelse return null;
-        if (values.len == 0) return null;
-        return values[values.len - 1];
-    }
-
-    pub fn getAll(self: *FormData, key: []const u8) ?[]const FormValue {
-        const values = self.values.getPtr(key) orelse return null;
-        return values.items.items;
-    }
-
-    pub fn multiItems(self: *FormData) []const FormField {
-        return self.ordered_items.items;
-    }
-
-    pub fn items(self: *FormData) []const FormField {
-        return self.multiItems();
-    }
-
-    pub fn getText(self: *FormData, key: []const u8) ?[]const u8 {
-        const value = self.get(key) orelse return null;
-        return switch (value) {
-            .text => |text| text,
-            .file => null,
-        };
-    }
-
-    pub fn getFile(self: *FormData, key: []const u8) ?UploadFile {
-        const value = self.get(key) orelse return null;
-        return switch (value) {
-            .text => null,
-            .file => |file| file,
-        };
-    }
-
-    pub fn getAllText(self: *FormData, allocator: std.mem.Allocator, key: []const u8) !?[]const []const u8 {
-        const values = self.getAll(key) orelse return null;
-        var count: usize = 0;
-        for (values) |value| {
-            if (value == .text) count += 1;
-        }
-
-        const text_values = try allocator.alloc([]const u8, count);
-        var index: usize = 0;
-        for (values) |value| {
-            switch (value) {
-                .text => |text| {
-                    text_values[index] = text;
-                    index += 1;
-                },
-                .file => {},
-            }
-        }
-        return text_values;
-    }
-
-    pub fn getAllFiles(self: *FormData, allocator: std.mem.Allocator, key: []const u8) !?[]const UploadFile {
-        const values = self.getAll(key) orelse return null;
-        var count: usize = 0;
-        for (values) |value| {
-            if (value == .file) count += 1;
-        }
-
-        const files = try allocator.alloc(UploadFile, count);
-        var index: usize = 0;
-        for (values) |value| {
-            switch (value) {
-                .text => {},
-                .file => |file| {
-                    files[index] = file;
-                    index += 1;
-                },
-            }
-        }
-        return files;
-    }
-
-    pub fn contains(self: *FormData, key: []const u8) bool {
-        return self.values.contains(key);
-    }
-
-    pub fn len(self: *FormData) usize {
-        return self.values.count();
-    }
-
-    pub fn isEmpty(self: *FormData) bool {
-        return self.len() == 0;
-    }
-};
+/// A text or uploaded form value.
+pub const FormValue = datastructures.FormValue;
+/// One named form value.
+pub const FormField = datastructures.FormField;
+/// Parsed form data.
+pub const FormData = datastructures.FormData;
 
 fn parseForm(comptime T: type, allocator: std.mem.Allocator, request: Request) !T {
     var parsed = FormData.initBorrowed(allocator);
@@ -9440,176 +7300,11 @@ fn parseQuery(comptime T: type, allocator: std.mem.Allocator, query: []const u8,
     return result;
 }
 
-const QueryParamValues = struct {
-    items: std.ArrayList([]const u8) = .empty,
-};
+/// Parsed multi-value query parameters.
+pub const QueryParams = datastructures.QueryParams;
 
-pub const QueryParams = struct {
-    allocator: std.mem.Allocator,
-    values: std.StringHashMap(QueryParamValues),
-    ordered_items: std.ArrayList(HeaderField) = .empty,
-    owned: bool = true,
-
-    pub fn init(allocator: std.mem.Allocator) QueryParams {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap(QueryParamValues).init(allocator),
-        };
-    }
-
-    fn initBorrowed(allocator: std.mem.Allocator) QueryParams {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap(QueryParamValues).init(allocator),
-            .owned = false,
-        };
-    }
-
-    pub fn deinit(self: *QueryParams) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            if (self.owned) {
-                self.allocator.free(entry.key_ptr.*);
-                for (entry.value_ptr.items.items) |value| {
-                    self.allocator.free(value);
-                }
-            }
-            entry.value_ptr.items.deinit(self.allocator);
-        }
-        self.values.deinit();
-        if (self.owned) {
-            for (self.ordered_items.items) |item| {
-                self.allocator.free(item.name);
-            }
-        }
-        self.ordered_items.deinit(self.allocator);
-    }
-
-    fn append(self: *QueryParams, key: []const u8, value: []const u8) !void {
-        const ordered_name = try self.allocator.dupe(u8, key);
-        errdefer self.allocator.free(ordered_name);
-
-        const entry = try self.values.getOrPut(key);
-        var inserted = false;
-        errdefer if (inserted) {
-            entry.value_ptr.items.deinit(self.allocator);
-            self.allocator.free(entry.key_ptr.*);
-            _ = self.values.remove(key);
-        };
-
-        if (!entry.found_existing) {
-            entry.key_ptr.* = try self.allocator.dupe(u8, key);
-            entry.value_ptr.* = .{};
-            inserted = true;
-        }
-        try entry.value_ptr.items.append(self.allocator, value);
-        errdefer _ = entry.value_ptr.items.pop();
-        try self.ordered_items.append(self.allocator, .{ .name = ordered_name, .value = value });
-    }
-
-    pub fn get(self: *QueryParams, key: []const u8) ?[]const u8 {
-        const values = self.getAll(key) orelse return null;
-        if (values.len == 0) return null;
-        return values[values.len - 1];
-    }
-
-    pub fn getAll(self: *QueryParams, key: []const u8) ?[]const []const u8 {
-        const values = self.values.getPtr(key) orelse return null;
-        return values.items.items;
-    }
-
-    pub fn multiItems(self: *QueryParams) []const HeaderField {
-        return self.ordered_items.items;
-    }
-
-    pub fn items(self: *QueryParams) []const HeaderField {
-        return self.multiItems();
-    }
-
-    pub fn contains(self: *QueryParams, key: []const u8) bool {
-        return self.values.contains(key);
-    }
-
-    pub fn len(self: *QueryParams) usize {
-        return self.values.count();
-    }
-
-    pub fn isEmpty(self: *QueryParams) bool {
-        return self.len() == 0;
-    }
-};
-
-pub const CookieParams = struct {
-    allocator: std.mem.Allocator,
-    values: std.StringHashMap([]const u8),
-
-    pub fn init(allocator: std.mem.Allocator) CookieParams {
-        return .{
-            .allocator = allocator,
-            .values = std.StringHashMap([]const u8).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *CookieParams) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.values.deinit();
-    }
-
-    fn put(self: *CookieParams, name: []const u8, value: []const u8) !void {
-        const owned_value = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(owned_value);
-
-        const entry = try self.values.getOrPut(name);
-        if (entry.found_existing) {
-            self.allocator.free(entry.value_ptr.*);
-        } else {
-            entry.key_ptr.* = try self.allocator.dupe(u8, name);
-        }
-        entry.value_ptr.* = owned_value;
-    }
-
-    fn remove(self: *CookieParams, name: []const u8) void {
-        const entry = self.values.fetchRemove(name) orelse return;
-        self.allocator.free(entry.key);
-        self.allocator.free(entry.value);
-    }
-
-    pub fn get(self: *CookieParams, name: []const u8) ?[]const u8 {
-        return self.values.get(name);
-    }
-
-    pub fn contains(self: *CookieParams, name: []const u8) bool {
-        return self.values.contains(name);
-    }
-
-    pub fn items(self: *CookieParams, allocator: std.mem.Allocator) ![]const HeaderField {
-        const values = try allocator.alloc(HeaderField, self.values.count());
-        errdefer allocator.free(values);
-
-        var it = self.values.iterator();
-        var index: usize = 0;
-        while (it.next()) |entry| {
-            values[index] = .{
-                .name = entry.key_ptr.*,
-                .value = entry.value_ptr.*,
-            };
-            index += 1;
-        }
-        return values;
-    }
-
-    pub fn len(self: *CookieParams) usize {
-        return self.values.count();
-    }
-
-    pub fn isEmpty(self: *CookieParams) bool {
-        return self.len() == 0;
-    }
-};
+/// Parsed cookie values.
+pub const CookieParams = datastructures.CookieParams;
 
 fn parseUrlEncodedMultiInto(allocator: std.mem.Allocator, input: []const u8, parsed: *QueryParams) !void {
     var it = std.mem.splitScalar(u8, input, '&');
@@ -10043,697 +7738,64 @@ fn parseBool(raw: []const u8) ?bool {
     if (std.ascii.eqlIgnoreCase(raw, "0")) return false;
     if (std.ascii.eqlIgnoreCase(raw, "off")) return false;
     if (std.ascii.eqlIgnoreCase(raw, "no")) return false;
-
     return null;
 }
 
-const BuiltinPathConverter = enum { string, integer, float, uuid, path };
-
-const PathConverter = union(enum) {
-    builtin: BuiltinPathConverter,
-    custom: []const u8,
-};
-
-const RouteParam = struct {
-    name: []const u8,
-    converter: PathConverter,
-};
-
-fn matchPath(pattern: []const u8, path: []const u8, params: *std.StringHashMap([]const u8), custom_convertors: []const PathConvertor) !bool {
-    if (std.mem.eql(u8, pattern, "/") or std.mem.eql(u8, path, "/")) {
-        return std.mem.eql(u8, pattern, path);
-    }
-
-    var pattern_it = std.mem.splitScalar(u8, std.mem.trimStart(u8, pattern, "/"), '/');
-    var path_it = std.mem.splitScalar(u8, std.mem.trimStart(u8, path, "/"), '/');
-
-    while (true) {
-        const pattern_part = pattern_it.next();
-        const path_part = path_it.next();
-        if (pattern_part == null or path_part == null) return pattern_part == null and path_part == null;
-
-        const p = pattern_part.?;
-        const segment = path_part.?;
-        if (terminalPathParamSegment(p)) |param| {
-            const start = @intFromPtr(segment.ptr) - @intFromPtr(path.ptr);
-            const value = path[start..];
-            if (!pathSegmentMatches(param.converter, value, custom_convertors)) return false;
-            try params.put(param.name, value);
-            return pattern_it.next() == null;
-        }
-
-        if (!try matchPathSegment(p, segment, params, custom_convertors)) return false;
-    }
-}
-
-fn parseRouteParam(segment: []const u8) ?RouteParam {
-    if (segment.len < 2 or segment[0] != '{' or segment[segment.len - 1] != '}') return null;
-
-    const contents = segment[1 .. segment.len - 1];
-    if (contents.len == 0) return null;
-
-    if (std.mem.indexOfScalar(u8, contents, ':')) |colon| {
-        const name = contents[0..colon];
-        const converter_name = contents[colon + 1 ..];
-        if (name.len == 0 or converter_name.len == 0) return null;
-        if (!validPathParamName(name)) return null;
-        return .{
-            .name = name,
-            .converter = parsePathConverter(converter_name),
-        };
-    }
-
-    if (!validPathParamName(contents)) return null;
-    return .{ .name = contents, .converter = .{ .builtin = .string } };
-}
-
-fn validPathParamName(name: []const u8) bool {
-    if (name.len == 0) return false;
-    if (!std.ascii.isAlphabetic(name[0]) and name[0] != '_') return false;
-    for (name[1..]) |ch| {
-        if (!std.ascii.isAlphanumeric(ch) and ch != '_') return false;
-    }
-    return true;
-}
-
-fn validPathConvertorName(name: []const u8) bool {
-    return validPathParamName(name);
-}
-
-fn parsePathConverter(name: []const u8) PathConverter {
-    if (parseBuiltinPathConverter(name)) |builtin| return .{ .builtin = builtin };
-    return .{ .custom = name };
-}
-
-fn parseBuiltinPathConverter(name: []const u8) ?BuiltinPathConverter {
-    if (std.mem.eql(u8, name, "str")) return .string;
-    if (std.mem.eql(u8, name, "string")) return .string;
-    if (std.mem.eql(u8, name, "int")) return .integer;
-    if (std.mem.eql(u8, name, "float")) return .float;
-    if (std.mem.eql(u8, name, "uuid")) return .uuid;
-    if (std.mem.eql(u8, name, "path")) return .path;
-    return null;
-}
-
-fn pathConverterRegistered(converter: PathConverter, custom_convertors: []const PathConvertor) bool {
-    return switch (converter) {
-        .builtin => true,
-        .custom => |name| findPathConvertor(custom_convertors, name) != null,
-    };
-}
-
-fn pathConverterIsPath(converter: PathConverter) bool {
-    return switch (converter) {
-        .builtin => |builtin| builtin == .path,
-        .custom => false,
-    };
-}
-
-fn findPathConvertor(custom_convertors: []const PathConvertor, name: []const u8) ?PathConvertor {
-    for (custom_convertors) |convertor| {
-        if (std.mem.eql(u8, convertor.name, name)) return convertor;
-    }
-    return null;
-}
-
-fn validateRoutePath(allocator: std.mem.Allocator, path: []const u8, custom_convertors: []const PathConvertor) !void {
-    if (path.len == 0 or path[0] != '/') return error.InvalidRoutePath;
-
-    var names = std.StringHashMap(void).init(allocator);
-    defer names.deinit();
-
-    var i: usize = 0;
-    while (i < path.len) {
-        if (path[i] == '{') {
-            const end = std.mem.indexOfScalarPos(u8, path, i + 1, '}') orelse return error.InvalidRoutePath;
-            const param = parseRouteParam(path[i .. end + 1]) orelse return error.InvalidRoutePath;
-            if (!pathConverterRegistered(param.converter, custom_convertors)) return error.InvalidRoutePath;
-            if (pathConverterIsPath(param.converter) and !pathParamIsTerminalSegment(path, i, end)) return error.InvalidRoutePath;
-            const entry = try names.getOrPut(param.name);
-            if (entry.found_existing) return error.DuplicatePathParam;
-            i = end + 1;
-        } else if (path[i] == '}') {
-            return error.InvalidRoutePath;
-        } else {
-            i += 1;
-        }
-    }
-}
-
-fn validateMountPath(allocator: std.mem.Allocator, path: []const u8, custom_convertors: []const PathConvertor) !void {
-    validateRoutePath(allocator, path, custom_convertors) catch return error.InvalidMountPath;
-
-    var i: usize = 0;
-    while (i < path.len) {
-        if (path[i] == '{') {
-            const end = std.mem.indexOfScalarPos(u8, path, i + 1, '}') orelse return error.InvalidMountPath;
-            const param = parseRouteParam(path[i .. end + 1]) orelse return error.InvalidMountPath;
-            if (pathConverterIsPath(param.converter)) return error.InvalidMountPath;
-            i = end + 1;
-        } else {
-            i += 1;
-        }
-    }
-}
-
-fn pathParamIsTerminalSegment(path: []const u8, start: usize, end: usize) bool {
-    const segment_start = start == 0 or path[start - 1] == '/';
-    const segment_end = end + 1 == path.len;
-    return segment_start and segment_end;
-}
-
-fn pathSegmentMatches(converter: PathConverter, value: []const u8, custom_convertors: []const PathConvertor) bool {
-    if (value.len == 0) return pathConverterIsPath(converter);
-
-    return switch (converter) {
-        .builtin => |builtin| switch (builtin) {
-            .string => std.mem.indexOfScalar(u8, value, '/') == null,
-            .integer => blk: {
-                if (std.mem.indexOfScalar(u8, value, '/') != null) break :blk false;
-                for (value) |ch| {
-                    if (!std.ascii.isDigit(ch)) break :blk false;
-                }
-                break :blk true;
-            },
-            .float => blk: {
-                if (std.mem.indexOfScalar(u8, value, '/') != null) break :blk false;
-                if (!isPathFloat(value)) break :blk false;
-                _ = std.fmt.parseFloat(f64, value) catch break :blk false;
-                break :blk true;
-            },
-            .uuid => blk: {
-                _ = Uuid.parse(value) catch break :blk false;
-                break :blk true;
-            },
-            .path => true,
-        },
-        .custom => |name| blk: {
-            if (std.mem.indexOfScalar(u8, value, '/') != null) break :blk false;
-            const convertor = findPathConvertor(custom_convertors, name) orelse break :blk false;
-            break :blk convertor.matches(value);
-        },
-    };
-}
-
-fn terminalPathParamSegment(pattern_segment: []const u8) ?RouteParam {
-    const param = parseRouteParam(pattern_segment) orelse return null;
-    if (!pathConverterIsPath(param.converter)) return null;
-    return param;
-}
-
-fn matchPathSegment(pattern_segment: []const u8, path_segment: []const u8, params: *std.StringHashMap([]const u8), custom_convertors: []const PathConvertor) !bool {
-    var pattern_index: usize = 0;
-    var path_index: usize = 0;
-
-    while (pattern_index < pattern_segment.len) {
-        if (pattern_segment[pattern_index] != '{') {
-            if (path_index >= path_segment.len or pattern_segment[pattern_index] != path_segment[path_index]) return false;
-            pattern_index += 1;
-            path_index += 1;
-            continue;
-        }
-
-        const end = std.mem.indexOfScalarPos(u8, pattern_segment, pattern_index + 1, '}') orelse return false;
-        const param = parseRouteParam(pattern_segment[pattern_index .. end + 1]) orelse return false;
-        if (pathConverterIsPath(param.converter)) return false;
-        const next_static_start = end + 1;
-        const value_end = if (nextStaticInSegment(pattern_segment[next_static_start..])) |next_static|
-            std.mem.indexOfPos(u8, path_segment, path_index, next_static.value) orelse return false
-        else
-            path_segment.len;
-
-        const value = path_segment[path_index..value_end];
-        if (!pathSegmentMatches(param.converter, value, custom_convertors)) return false;
-        try params.put(param.name, value);
-        pattern_index = end + 1;
-        path_index = value_end;
-    }
-
-    return path_index == path_segment.len;
-}
-
-fn isPathFloat(value: []const u8) bool {
-    if (value.len == 0) return false;
-
-    var seen_dot = false;
-    var digit_count: usize = 0;
-    var digits_after_dot: usize = 0;
-
-    for (value) |ch| {
-        if (std.ascii.isDigit(ch)) {
-            digit_count += 1;
-            if (seen_dot) digits_after_dot += 1;
-            continue;
-        }
-        if (ch == '.' and !seen_dot) {
-            if (digit_count == 0) return false;
-            seen_dot = true;
-            continue;
-        }
-        return false;
-    }
-
-    if (digit_count == 0) return false;
-    if (seen_dot and digits_after_dot == 0) return false;
-    return true;
-}
-
-const NextStatic = struct {
-    start: usize,
-    value: []const u8,
-};
-
-fn nextStaticInSegment(pattern_tail: []const u8) ?NextStatic {
-    var i: usize = 0;
-    while (i < pattern_tail.len) {
-        if (pattern_tail[i] == '{') {
-            if (std.mem.indexOfScalarPos(u8, pattern_tail, i + 1, '}')) |end| {
-                i = end + 1;
-                continue;
-            }
-            return null;
-        }
-
-        const start = i;
-        while (i < pattern_tail.len and pattern_tail[i] != '{') : (i += 1) {}
-        return .{ .start = start, .value = pattern_tail[start..i] };
-    }
-    return null;
-}
-
-fn joinPaths(allocator: std.mem.Allocator, prefix: []const u8, path: []const u8) ![]u8 {
-    if (prefix.len == 0) return allocator.dupe(u8, path);
-    if (path.len == 0 or std.mem.eql(u8, path, "/")) return allocator.dupe(u8, prefix);
-
-    const trimmed_prefix = std.mem.trimEnd(u8, prefix, "/");
-    const trimmed_path = std.mem.trimStart(u8, path, "/");
-    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ trimmed_prefix, trimmed_path });
-}
-
-fn joinRequestPath(allocator: std.mem.Allocator, root_path: []const u8, path: []const u8) ![]u8 {
-    if (root_path.len == 0) return allocator.dupe(u8, path);
-    if (path.len == 0 or std.mem.eql(u8, path, "/")) {
-        if (root_path[root_path.len - 1] == '/') return allocator.dupe(u8, root_path);
-        return std.fmt.allocPrint(allocator, "{s}/", .{root_path});
-    }
-    return joinPaths(allocator, root_path, path);
-}
-
-fn joinMountRoutePath(allocator: std.mem.Allocator, mount_path: []const u8, child_path: []const u8) ![]u8 {
-    if (std.mem.eql(u8, child_path, "/")) return joinRequestPath(allocator, mount_path, child_path);
-    return joinPaths(allocator, mount_path, child_path);
-}
-
-const MaybeOwnedSlice = struct {
-    value: []const u8,
-    owned: bool = false,
-};
-
-fn mountRootPath(allocator: std.mem.Allocator, root_path: []const u8, mount_prefix: []const u8) !MaybeOwnedSlice {
-    if (root_path.len == 0) return .{ .value = mount_prefix };
-    return .{
-        .value = try joinPaths(allocator, root_path, mount_prefix),
-        .owned = true,
-    };
-}
-
-fn docsOpenApiUrl(allocator: std.mem.Allocator, root_path: []const u8, openapi_url: []const u8) !MaybeOwnedSlice {
-    if (root_path.len == 0 or !std.mem.startsWith(u8, openapi_url, "/")) {
-        return .{ .value = openapi_url };
-    }
-
-    return .{
-        .value = try joinPaths(allocator, root_path, openapi_url),
-        .owned = true,
-    };
-}
-
-fn normalizeMountPrefix(prefix: []const u8) []const u8 {
-    const trimmed = std.mem.trimEnd(u8, prefix, "/");
-    return if (trimmed.len == 0) "/" else trimmed;
-}
-
-fn normalizeHostMatchPattern(pattern: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trim(u8, pattern, " \t");
-    if (trimmed.len == 0) return null;
-    if (std.mem.indexOfAny(u8, trimmed, "/ \t\r\n") != null) return null;
-    return hostPatternMatchName(trimmed);
-}
-
-fn normalizeHostUrlPattern(pattern: []const u8) ?[]const u8 {
-    const trimmed = std.mem.trim(u8, pattern, " \t");
-    if (trimmed.len == 0) return null;
-    if (std.mem.indexOfAny(u8, trimmed, "/ \t\r\n") != null) return null;
-    _ = hostPatternMatchName(trimmed) orelse return null;
-    return trimmed;
-}
-
-fn hostPatternMatchName(pattern: []const u8) ?[]const u8 {
-    if (pattern.len == 0) return null;
-    if (pattern[0] == '[') {
-        const end = std.mem.indexOfScalar(u8, pattern, ']') orelse return null;
-        return pattern[0 .. end + 1];
-    }
-
-    var in_param = false;
-    for (pattern, 0..) |ch, i| {
-        if (ch == '{') {
-            if (in_param) return null;
-            in_param = true;
-            continue;
-        }
-        if (ch == '}') {
-            if (!in_param) return null;
-            in_param = false;
-            continue;
-        }
-        if (ch == ':' and !in_param) {
-            return if (i == 0) null else pattern[0..i];
-        }
-    }
-
-    if (in_param) return null;
-    return pattern;
-}
-
-fn validateHostPattern(allocator: std.mem.Allocator, pattern: []const u8, custom_convertors: []const PathConvertor) !void {
-    var names = std.StringHashMap(void).init(allocator);
-    defer names.deinit();
-
-    var i: usize = 0;
-    while (i < pattern.len) {
-        if (pattern[i] == '{') {
-            const end = std.mem.indexOfScalarPos(u8, pattern, i + 1, '}') orelse return error.InvalidHostPattern;
-            const param = parseRouteParam(pattern[i .. end + 1]) orelse return error.InvalidHostPattern;
-            if (!pathConverterRegistered(param.converter, custom_convertors)) return error.InvalidHostPattern;
-            if (pathConverterIsPath(param.converter)) return error.InvalidHostPattern;
-            const entry = try names.getOrPut(param.name);
-            if (entry.found_existing) return error.DuplicateHostParam;
-            i = end + 1;
-        } else if (pattern[i] == '}') {
-            return error.InvalidHostPattern;
-        } else {
-            i += 1;
-        }
-    }
-}
-
-fn requestHostName(host_header: []const u8) ?[]const u8 {
-    const value = std.mem.trim(u8, host_header, " \t");
-    if (value.len == 0) return null;
-    if (value[0] == '[') {
-        const end = std.mem.indexOfScalar(u8, value, ']') orelse return null;
-        return value[0 .. end + 1];
-    }
-    const colon = std.mem.indexOfScalar(u8, value, ':') orelse value.len;
-    if (colon == 0) return null;
-    return value[0..colon];
-}
-
-fn validRouteNamespace(value: []const u8) bool {
-    if (value.len == 0) return false;
-    return std.mem.indexOfAny(u8, value, ":/ \t\r\n") == null;
-}
-
-fn namespacedRouteName(name: []const u8, namespace: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, name, namespace)) return null;
-    if (name.len <= namespace.len or name[namespace.len] != ':') return null;
-    const child_name = name[namespace.len + 1 ..];
-    return if (child_name.len == 0) null else child_name;
-}
-
-fn matchHost(allocator: std.mem.Allocator, pattern: []const u8, host: []const u8, params: *std.ArrayList(HeaderField), custom_convertors: []const PathConvertor) !bool {
-    var pattern_index: usize = 0;
-    var host_index: usize = 0;
-
-    while (pattern_index < pattern.len) {
-        if (pattern[pattern_index] != '{') {
-            if (host_index >= host.len or std.ascii.toLower(pattern[pattern_index]) != std.ascii.toLower(host[host_index])) return false;
-            pattern_index += 1;
-            host_index += 1;
-            continue;
-        }
-
-        const end = std.mem.indexOfScalarPos(u8, pattern, pattern_index + 1, '}') orelse return false;
-        const param = parseRouteParam(pattern[pattern_index .. end + 1]) orelse return false;
-        if (pathConverterIsPath(param.converter)) return false;
-        const next_static_start = end + 1;
-        const value_end = if (nextStaticInSegment(pattern[next_static_start..])) |next_static|
-            indexOfIgnoreCasePos(host, host_index, next_static.value) orelse return false
-        else
-            host.len;
-
-        const value = host[host_index..value_end];
-        if (!pathSegmentMatches(param.converter, value, custom_convertors)) return false;
-        try params.append(allocator, .{
-            .name = param.name,
-            .value = value,
-        });
-        pattern_index = end + 1;
-        host_index = value_end;
-    }
-
-    return host_index == host.len;
-}
-
-fn indexOfIgnoreCasePos(haystack: []const u8, start: usize, needle: []const u8) ?usize {
-    if (needle.len == 0) return start;
-    if (start > haystack.len or needle.len > haystack.len - start) return null;
-    var index = start;
-    while (index <= haystack.len - needle.len) : (index += 1) {
-        var matched = true;
-        for (needle, 0..) |ch, offset| {
-            if (std.ascii.toLower(ch) != std.ascii.toLower(haystack[index + offset])) {
-                matched = false;
-                break;
-            }
-        }
-        if (matched) return index;
-    }
-    return null;
-}
-
-fn ParamUsage(comptime Params: type) type {
-    return switch (@typeInfo(Params)) {
-        .@"struct" => |info| [info.fields.len]bool,
-        else => @compileError("urlPathFor params must be a struct literal, e.g. .{ .id = 1 }"),
-    };
-}
-
-fn initParamUsage(comptime Params: type) ParamUsage(Params) {
-    const fields = @typeInfo(Params).@"struct".fields;
-    return [_]bool{false} ** fields.len;
-}
-
-fn markParamUsed(used: anytype, comptime index: usize) void {
-    if (comptime @TypeOf(used) != @TypeOf(null)) {
-        used.*[index] = true;
-    }
-}
-
-fn ensureNoUnusedUrlParams(params: anytype, used: ParamUsage(@TypeOf(params))) !void {
-    const Params = @TypeOf(params);
-    inline for (@typeInfo(Params).@"struct".fields, 0..) |_, index| {
-        if (!used[index]) return error.NoRoute;
-    }
-}
-
-const MountMatch = struct {
-    path: []const u8,
-    root_prefix: []const u8,
-};
-
-fn matchMount(allocator: std.mem.Allocator, pattern: []const u8, path: []const u8, params: *std.ArrayList(HeaderField), custom_convertors: []const PathConvertor) !?MountMatch {
-    if (path.len == 0 or path[0] != '/') return null;
-    if (std.mem.eql(u8, pattern, "/")) {
-        return .{
-            .path = path,
-            .root_prefix = "",
-        };
-    }
-
-    var captured = std.StringHashMap([]const u8).init(allocator);
-    defer captured.deinit();
-
-    var pattern_index: usize = 1;
-    var path_index: usize = 1;
-    var consumed_end: usize = 0;
-
-    while (pattern_index < pattern.len) {
-        if (path_index > path.len or path_index == path.len) return null;
-
-        const pattern_end = std.mem.indexOfScalarPos(u8, pattern, pattern_index, '/') orelse pattern.len;
-        const path_end = std.mem.indexOfScalarPos(u8, path, path_index, '/') orelse path.len;
-        const pattern_segment = pattern[pattern_index..pattern_end];
-        const path_segment = path[path_index..path_end];
-
-        if (!try matchPathSegment(pattern_segment, path_segment, &captured, custom_convertors)) return null;
-
-        consumed_end = path_end;
-        pattern_index = if (pattern_end < pattern.len) pattern_end + 1 else pattern_end;
-        path_index = if (path_end < path.len) path_end + 1 else path_end;
-    }
-
-    var it = captured.iterator();
-    while (it.next()) |entry| {
-        try params.append(allocator, .{
-            .name = entry.key_ptr.*,
-            .value = entry.value_ptr.*,
-        });
-    }
-
-    return .{
-        .path = if (consumed_end == path.len) "/" else path[consumed_end..],
-        .root_prefix = path[0..consumed_end],
-    };
-}
-
-fn renderPath(allocator: std.mem.Allocator, pattern: []const u8, params: anytype) anyerror![]u8 {
-    return renderPattern(allocator, pattern, params, .path, null, &.{});
-}
-
-fn renderPathTracked(allocator: std.mem.Allocator, pattern: []const u8, params: anytype, used: anytype, custom_convertors: []const PathConvertor) anyerror![]u8 {
-    return renderPattern(allocator, pattern, params, .path, used, custom_convertors);
-}
-
-fn renderHostPattern(allocator: std.mem.Allocator, pattern: []const u8, params: anytype) anyerror![]u8 {
-    return renderPattern(allocator, pattern, params, .host, null, &.{});
-}
-
-fn renderHostPatternTracked(allocator: std.mem.Allocator, pattern: []const u8, params: anytype, used: anytype, custom_convertors: []const PathConvertor) anyerror![]u8 {
-    return renderPattern(allocator, pattern, params, .host, used, custom_convertors);
-}
-
-const RenderTarget = enum { path, host };
-
-fn renderPattern(allocator: std.mem.Allocator, pattern: []const u8, params: anytype, comptime target: RenderTarget, used: anytype, custom_convertors: []const PathConvertor) anyerror![]u8 {
-    var out = std.Io.Writer.Allocating.init(allocator);
-    errdefer out.deinit();
-
-    var i: usize = 0;
-    while (i < pattern.len) {
-        if (pattern[i] == '{') {
-            const end = std.mem.indexOfScalarPos(u8, pattern, i + 1, '}') orelse return error.InvalidRoutePath;
-            const param = parseRouteParam(pattern[i .. end + 1]) orelse return error.InvalidRoutePath;
-            try writeParamValue(allocator, &out.writer, param, params, target, used, custom_convertors);
-            i = end + 1;
-        } else {
-            try out.writer.writeByte(pattern[i]);
-            i += 1;
-        }
-    }
-
-    return out.toOwnedSlice();
-}
-
-fn renderMountPath(allocator: std.mem.Allocator, prefix: []const u8, params: anytype) anyerror![]u8 {
-    return renderMountPathWithUsage(allocator, prefix, params, null, &.{});
-}
-
-fn renderMountPathTracked(allocator: std.mem.Allocator, prefix: []const u8, params: anytype, used: anytype, custom_convertors: []const PathConvertor) anyerror![]u8 {
-    return renderMountPathWithUsage(allocator, prefix, params, used, custom_convertors);
-}
-
-fn renderMountPathWithUsage(allocator: std.mem.Allocator, prefix: []const u8, params: anytype, used: anytype, custom_convertors: []const PathConvertor) anyerror![]u8 {
-    const rendered_prefix = try renderPattern(allocator, prefix, params, .path, used, custom_convertors);
-    defer allocator.free(rendered_prefix);
-
-    const Params = @TypeOf(params);
-    switch (@typeInfo(Params)) {
-        .@"struct" => |info| {
-            inline for (info.fields, 0..) |field, field_index| {
-                if (std.mem.eql(u8, field.name, "path")) {
-                    markParamUsed(used, field_index);
-                    var value = std.Io.Writer.Allocating.init(allocator);
-                    defer value.deinit();
-                    try writeUrlScalar(&value.writer, @field(params, field.name));
-                    const raw_path = value.written();
-                    if (raw_path.len == 0) return error.InvalidPathParam;
-                    if (std.mem.indexOfAny(u8, raw_path, "\r\n\\") != null) return error.InvalidPathParam;
-
-                    const tail = if (std.mem.startsWith(u8, raw_path, "/")) raw_path[1..] else raw_path;
-                    var encoded = std.Io.Writer.Allocating.init(allocator);
-                    defer encoded.deinit();
-                    try encoded.writer.writeByte('/');
-                    try writePercentEncodedPath(&encoded.writer, tail, true);
-                    return joinPaths(allocator, rendered_prefix, encoded.written());
-                }
-            }
-            return error.NoRoute;
-        },
-        else => @compileError("urlPathFor mount params must be a struct literal, e.g. .{ .path = \"/app.css\" }"),
-    }
-}
-
-fn writeParamValue(allocator: std.mem.Allocator, writer: *std.Io.Writer, route_param: RouteParam, params: anytype, comptime target: RenderTarget, used: anytype, custom_convertors: []const PathConvertor) anyerror!void {
-    const Params = @TypeOf(params);
-    switch (@typeInfo(Params)) {
-        .@"struct" => |info| {
-            inline for (info.fields, 0..) |field, field_index| {
-                if (std.mem.eql(u8, field.name, route_param.name)) {
-                    markParamUsed(used, field_index);
-                    var value = std.Io.Writer.Allocating.init(allocator);
-                    defer value.deinit();
-                    try writeUrlScalar(&value.writer, @field(params, field.name));
-                    if (!pathSegmentMatches(route_param.converter, value.written(), custom_convertors)) return error.InvalidPathParam;
-                    switch (target) {
-                        .path => try writePercentEncodedPath(writer, value.written(), pathConverterIsPath(route_param.converter)),
-                        .host => {
-                            if (std.mem.indexOfAny(u8, value.written(), "%/?#@: \t\r\n") != null) return error.InvalidPathParam;
-                            try writer.writeAll(value.written());
-                        },
-                    }
-                    return;
-                }
-            }
-            return error.MissingPathParam;
-        },
-        else => @compileError("urlPathFor params must be a struct literal, e.g. .{ .id = 1 }"),
-    }
-}
-
-fn writeUrlScalar(writer: *std.Io.Writer, value: anytype) !void {
-    const T = @TypeOf(value);
-    switch (@typeInfo(T)) {
-        .int, .comptime_int => try writer.print("{}", .{value}),
-        .float, .comptime_float => try writer.print("{d}", .{value}),
-        .bool => try writer.writeAll(if (value) "true" else "false"),
-        .@"enum" => try writer.writeAll(@tagName(value)),
-        .pointer => |ptr| {
-            if (ptr.size == .slice and ptr.child == u8) {
-                try writer.writeAll(value);
-                return;
-            }
-            if (ptr.size == .one and @typeInfo(ptr.child) == .array and @typeInfo(ptr.child).array.child == u8) {
-                const slice = value.*;
-                try writer.writeAll(&slice);
-                return;
-            }
-            @compileError("unsupported urlPathFor parameter pointer type: " ++ @typeName(T));
-        },
-        .array => |arr| {
-            if (arr.child == u8) {
-                try writer.writeAll(&value);
-                return;
-            }
-            @compileError("unsupported urlPathFor parameter array type: " ++ @typeName(T));
-        },
-        else => @compileError("unsupported urlPathFor parameter type: " ++ @typeName(T)),
-    }
-}
-
-fn writePercentEncodedPath(writer: *std.Io.Writer, value: []const u8, allow_slash: bool) !void {
-    const hex = "0123456789ABCDEF";
-    for (value) |ch| {
-        if (pathCharSafe(ch, allow_slash)) {
-            try writer.writeByte(ch);
-        } else {
-            try writer.writeByte('%');
-            try writer.writeByte(hex[ch >> 4]);
-            try writer.writeByte(hex[ch & 0x0f]);
-        }
-    }
-}
+const BuiltinPathConverter = routing.BuiltinPathConverter;
+const PathConverter = routing.PathConverter;
+const RouteParam = routing.RouteParam;
+const matchPath = routing.matchPath;
+const parseRouteParam = routing.parseRouteParam;
+const validPathParamName = routing.validPathParamName;
+const validPathConvertorName = routing.validPathConvertorName;
+const parsePathConverter = routing.parsePathConverter;
+const parseBuiltinPathConverter = routing.parseBuiltinPathConverter;
+const pathConverterRegistered = routing.pathConverterRegistered;
+const pathConverterIsPath = routing.pathConverterIsPath;
+const findPathConvertor = routing.findPathConvertor;
+const validateRoutePath = routing.validateRoutePath;
+const validateMountPath = routing.validateMountPath;
+const pathParamIsTerminalSegment = routing.pathParamIsTerminalSegment;
+const pathSegmentMatches = routing.pathSegmentMatches;
+const terminalPathParamSegment = routing.terminalPathParamSegment;
+const matchPathSegment = routing.matchPathSegment;
+const isPathFloat = routing.isPathFloat;
+const NextStatic = routing.NextStatic;
+const nextStaticInSegment = routing.nextStaticInSegment;
+const joinPaths = routing.joinPaths;
+const joinRequestPath = routing.joinRequestPath;
+const joinMountRoutePath = routing.joinMountRoutePath;
+const MaybeOwnedSlice = routing.MaybeOwnedSlice;
+const mountRootPath = routing.mountRootPath;
+const docsOpenApiUrl = routing.docsOpenApiUrl;
+const normalizeMountPrefix = routing.normalizeMountPrefix;
+const normalizeHostMatchPattern = routing.normalizeHostMatchPattern;
+const normalizeHostUrlPattern = routing.normalizeHostUrlPattern;
+const hostPatternMatchName = routing.hostPatternMatchName;
+const validateHostPattern = routing.validateHostPattern;
+const requestHostName = routing.requestHostName;
+const validRouteNamespace = routing.validRouteNamespace;
+const namespacedRouteName = routing.namespacedRouteName;
+const matchHost = routing.matchHost;
+const indexOfIgnoreCasePos = routing.indexOfIgnoreCasePos;
+const ParamUsage = routing.ParamUsage;
+const initParamUsage = routing.initParamUsage;
+const markParamUsed = routing.markParamUsed;
+const ensureNoUnusedUrlParams = routing.ensureNoUnusedUrlParams;
+const MountMatch = routing.MountMatch;
+const matchMount = routing.matchMount;
+const renderPath = routing.renderPath;
+const renderPathTracked = routing.renderPathTracked;
+const renderHostPattern = routing.renderHostPattern;
+const renderHostPatternTracked = routing.renderHostPatternTracked;
+const RenderTarget = routing.RenderTarget;
+const renderPattern = routing.renderPattern;
+const renderMountPath = routing.renderMountPath;
+const renderMountPathTracked = routing.renderMountPathTracked;
+const renderMountPathWithUsage = routing.renderMountPathWithUsage;
+const writeParamValue = routing.writeParamValue;
+const writeUrlScalar = routing.writeUrlScalar;
+const writePercentEncodedPath = routing.writePercentEncodedPath;
 
 fn quoteRedirectLocation(allocator: std.mem.Allocator, location: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -10799,32 +7861,6 @@ fn redirectLocationCharSafe(ch: u8) bool {
     };
 }
 
-fn pathCharSafe(ch: u8, allow_slash: bool) bool {
-    if (std.ascii.isAlphanumeric(ch)) return true;
-    return switch (ch) {
-        '-',
-        '.',
-        '_',
-        '~',
-        ':',
-        '@',
-        '!',
-        '$',
-        '&',
-        '\'',
-        '(',
-        ')',
-        '*',
-        '+',
-        ',',
-        ';',
-        '=',
-        => true,
-        '/' => allow_slash,
-        else => false,
-    };
-}
-
 fn percentDecode(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return percentDecodeWithOptions(allocator, input, true);
 }
@@ -10858,22 +7894,18 @@ fn percentDecodeWithOptions(allocator: std.mem.Allocator, input: []const u8, plu
     return out.toOwnedSlice(allocator);
 }
 
-const AcceptMatch = struct {
-    q: u16,
-    specificity: u8,
-    order: usize,
-};
-
-fn mediaTypeOnly(value: []const u8) []const u8 {
-    return if (std.mem.indexOfScalar(u8, value, ';')) |idx|
-        std.mem.trim(u8, value[0..idx], " \t")
-    else
-        std.mem.trim(u8, value, " \t");
-}
-
-fn contentTypeMatches(content_type: []const u8, expected: []const u8) bool {
-    return std.ascii.eqlIgnoreCase(mediaTypeOnly(content_type), mediaTypeOnly(expected));
-}
+const AcceptMatch = content_types.AcceptMatch;
+const mediaTypeOnly = content_types.mediaTypeOnly;
+const contentTypeMatches = content_types.contentTypeMatches;
+const acceptMatch = content_types.acceptMatch;
+const preferredAcceptMatch = content_types.preferredAcceptMatch;
+const acceptSpecificity = content_types.acceptSpecificity;
+const acceptQuality = content_types.acceptQuality;
+const parseQuality = content_types.parseQuality;
+const acceptMatchBetter = content_types.acceptMatchBetter;
+const acceptPreferredBetter = content_types.acceptPreferredBetter;
+const contentTypeParam = content_types.contentTypeParam;
+const headerParam = content_types.headerParam;
 
 fn requestHasJsonBodyContentType(request: Request) bool {
     const content_type = request.header("content-type") orelse return true;
@@ -10883,143 +7915,7 @@ fn requestHasJsonBodyContentType(request: Request) bool {
     return std.ascii.eqlIgnoreCase(media_type[0..slash], "application") and std.ascii.endsWithIgnoreCase(media_type[slash + 1 ..], "+json");
 }
 
-fn acceptMatch(header: []const u8, offered: []const u8) ?AcceptMatch {
-    const offered_media = mediaTypeOnly(offered);
-    if (offered_media.len == 0) return null;
-
-    var best: ?AcceptMatch = null;
-    var it = std.mem.splitScalar(u8, header, ',');
-    var order: usize = 0;
-    while (it.next()) |raw_range| : (order += 1) {
-        const range = std.mem.trim(u8, raw_range, " \t");
-        if (range.len == 0) continue;
-
-        const range_media = mediaTypeOnly(range);
-        const q = acceptQuality(range);
-        if (q == 0) continue;
-
-        const specificity = acceptSpecificity(range_media, offered_media) orelse continue;
-        const candidate = AcceptMatch{ .q = q, .specificity = specificity, .order = order };
-        if (best == null or acceptMatchBetter(candidate, best.?)) best = candidate;
-    }
-    return best;
-}
-
-fn preferredAcceptMatch(header: []const u8, offers: []const []const u8) ?[]const u8 {
-    var best_offer: ?[]const u8 = null;
-    var best_match: ?AcceptMatch = null;
-    var best_offer_index: usize = 0;
-
-    for (offers, 0..) |offer, offer_index| {
-        const candidate = acceptMatch(header, offer) orelse continue;
-        if (best_match == null or acceptPreferredBetter(candidate, offer_index, best_match.?, best_offer_index)) {
-            best_offer = offer;
-            best_match = candidate;
-            best_offer_index = offer_index;
-        }
-    }
-
-    return best_offer;
-}
-
-fn acceptSpecificity(range: []const u8, offered: []const u8) ?u8 {
-    if (std.mem.eql(u8, range, "*/*")) return 0;
-
-    const range_slash = std.mem.indexOfScalar(u8, range, '/') orelse return null;
-    const offered_slash = std.mem.indexOfScalar(u8, offered, '/') orelse return null;
-    const range_type = std.mem.trim(u8, range[0..range_slash], " \t");
-    const range_subtype = std.mem.trim(u8, range[range_slash + 1 ..], " \t");
-    const offered_type = std.mem.trim(u8, offered[0..offered_slash], " \t");
-    const offered_subtype = std.mem.trim(u8, offered[offered_slash + 1 ..], " \t");
-
-    if (std.ascii.eqlIgnoreCase(range_type, "*") and std.mem.eql(u8, range_subtype, "*")) return 0;
-    if (!std.ascii.eqlIgnoreCase(range_type, offered_type)) return null;
-    if (std.mem.eql(u8, range_subtype, "*")) return 1;
-    if (std.ascii.startsWithIgnoreCase(range_subtype, "*+")) {
-        const suffix = range_subtype[1..];
-        if (offered_subtype.len > suffix.len and std.ascii.endsWithIgnoreCase(offered_subtype, suffix)) return 2;
-    }
-    if (std.ascii.eqlIgnoreCase(range_subtype, offered_subtype)) return 3;
-    return null;
-}
-
-fn acceptQuality(range: []const u8) u16 {
-    var it = std.mem.splitScalar(u8, range, ';');
-    _ = it.next();
-    while (it.next()) |raw_part| {
-        const part = std.mem.trim(u8, raw_part, " \t");
-        const eq = std.mem.indexOfScalar(u8, part, '=') orelse continue;
-        const name = std.mem.trim(u8, part[0..eq], " \t");
-        if (!std.ascii.eqlIgnoreCase(name, "q")) continue;
-        const value = std.mem.trim(u8, part[eq + 1 ..], " \t");
-        return parseQuality(value) orelse 0;
-    }
-    return 1000;
-}
-
-fn parseQuality(value: []const u8) ?u16 {
-    if (std.mem.eql(u8, value, "1")) return 1000;
-    if (std.mem.eql(u8, value, "0")) return 0;
-
-    if (std.mem.startsWith(u8, value, "1.")) {
-        for (value[2..]) |ch| {
-            if (ch != '0') return null;
-        }
-        return 1000;
-    }
-
-    if (!std.mem.startsWith(u8, value, "0.")) return null;
-
-    var q: u16 = 0;
-    var multiplier: u16 = 100;
-    var digits: usize = 0;
-    for (value[2..]) |ch| {
-        if (ch < '0' or ch > '9') return null;
-        if (digits < 3) {
-            q += @as(u16, ch - '0') * multiplier;
-            multiplier /= 10;
-        }
-        digits += 1;
-    }
-    return q;
-}
-
-fn acceptMatchBetter(candidate: AcceptMatch, current: AcceptMatch) bool {
-    if (candidate.q != current.q) return candidate.q > current.q;
-    if (candidate.specificity != current.specificity) return candidate.specificity > current.specificity;
-    return candidate.order < current.order;
-}
-
-fn acceptPreferredBetter(candidate: AcceptMatch, candidate_offer_index: usize, current: AcceptMatch, current_offer_index: usize) bool {
-    if (candidate.q != current.q) return candidate.q > current.q;
-    if (candidate.specificity != current.specificity) return candidate.specificity > current.specificity;
-    if (candidate.order != current.order) return candidate.order < current.order;
-    return candidate_offer_index < current_offer_index;
-}
-
-fn contentTypeParam(content_type: []const u8, param_name: []const u8) ?[]const u8 {
-    return headerParam(content_type, param_name);
-}
-
-fn headerParam(value: []const u8, param_name: []const u8) ?[]const u8 {
-    var it = std.mem.splitScalar(u8, value, ';');
-    _ = it.next();
-    while (it.next()) |raw_part| {
-        const part = std.mem.trim(u8, raw_part, " \t");
-        const eq = std.mem.indexOfScalar(u8, part, '=') orelse continue;
-        const name = std.mem.trim(u8, part[0..eq], " \t");
-        if (!std.ascii.eqlIgnoreCase(name, param_name)) continue;
-
-        const raw_value = std.mem.trim(u8, part[eq + 1 ..], " \t");
-        if (raw_value.len >= 2 and raw_value[0] == '"' and raw_value[raw_value.len - 1] == '"') {
-            return raw_value[1 .. raw_value.len - 1];
-        }
-        return raw_value;
-    }
-    return null;
-}
-
-fn writeOpenApi(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *App, root_path: []const u8) !void {
+fn writeOpenApi(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *ZAPI, root_path: []const u8) !void {
     try writer.writeAll("{\"openapi\":\"3.1.0\",\"info\":");
     try writeOpenApiInfo(writer, app.options);
     if (root_path.len > 0 or app.options.openapi_servers.len > 0) {
@@ -11089,7 +7985,7 @@ fn routeIncludedInOpenApi(route_item: RegisteredRoute) bool {
     return route_item.metadata.include_in_schema and route_item.method.supportsOpenApi();
 }
 
-fn writeOpenApiInfo(writer: *std.Io.Writer, options: AppOptions) !void {
+fn writeOpenApiInfo(writer: *std.Io.Writer, options: ZAPIOptions) !void {
     try writer.writeAll("{\"title\":");
     try writeJsonString(writer, options.title);
     if (options.description) |description| {
@@ -11764,7 +8660,7 @@ fn writeJsonStringContents(writer: *std.Io.Writer, value: []const u8) !void {
     }
 }
 
-fn writeComponents(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *App) !void {
+fn writeComponents(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *ZAPI) !void {
     var seen = std.StringHashMap(void).init(allocator);
     defer seen.deinit();
 
@@ -11788,7 +8684,7 @@ fn writeComponents(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *A
     }
 }
 
-fn appUsesSecurity(app: *App) bool {
+fn appUsesSecurity(app: *ZAPI) bool {
     for (app.routes.items) |route_item| {
         if (!routeIncludedInOpenApi(route_item)) continue;
         if (route_item.metadata.requires_bearer_auth) return true;
@@ -11802,7 +8698,7 @@ fn appUsesSecurity(app: *App) bool {
     return false;
 }
 
-fn writeSecuritySchemes(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *App) !void {
+fn writeSecuritySchemes(allocator: std.mem.Allocator, writer: *std.Io.Writer, app: *ZAPI) !void {
     var first = true;
     if (appUsesBearerAuth(app)) {
         try writer.writeAll("\"BearerAuth\":{\"type\":\"http\",\"scheme\":\"bearer\"}");
@@ -11922,7 +8818,7 @@ fn writeSecuritySchemes(allocator: std.mem.Allocator, writer: *std.Io.Writer, ap
     }
 }
 
-fn appUsesBearerAuth(app: *App) bool {
+fn appUsesBearerAuth(app: *ZAPI) bool {
     for (app.routes.items) |route_item| {
         if (!routeIncludedInOpenApi(route_item)) continue;
         if (route_item.metadata.requires_bearer_auth) return true;
@@ -11930,7 +8826,7 @@ fn appUsesBearerAuth(app: *App) bool {
     return false;
 }
 
-fn appUsesBasicAuth(app: *App) bool {
+fn appUsesBasicAuth(app: *ZAPI) bool {
     for (app.routes.items) |route_item| {
         if (!routeIncludedInOpenApi(route_item)) continue;
         if (route_item.metadata.requires_basic_auth) return true;
@@ -12121,98 +9017,9 @@ fn writeJsonSchemaWithDefault(comptime T: type, writer: *std.Io.Writer, default_
     }
 }
 
-fn writeSwaggerUiHtml(writer: *std.Io.Writer, title: []const u8, openapi_url: []const u8, oauth2_redirect_url: ?[]const u8) !void {
-    try writer.writeAll("<!doctype html>\n<html>\n<head><title>");
-    try writeHtmlText(writer, title);
-    try writer.writeAll(" - Swagger UI</title><link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui.css\"></head>\n<body>\n<div id=\"swagger-ui\"></div>\n<script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist/swagger-ui-bundle.js\"></script>\n<script>\nwindow.ui = SwaggerUIBundle({url: \"");
-    try writeJavaScriptStringContents(writer, openapi_url);
-    try writer.writeAll("\", dom_id: \"#swagger-ui\"");
-    if (oauth2_redirect_url) |url| {
-        try writer.writeAll(", oauth2RedirectUrl: window.location.origin + \"");
-        try writeJavaScriptStringContents(writer, url);
-        try writer.writeAll("\"");
-    }
-    try writer.writeAll("});\n</script>\n</body>\n</html>");
-}
-
-fn writeSwaggerUiOAuth2RedirectHtml(writer: *std.Io.Writer, title: []const u8) !void {
-    try writer.writeAll("<!doctype html>\n<html>\n<head><title>");
-    try writeHtmlText(writer, title);
-    try writer.writeAll(
-        " - Swagger UI OAuth2 Redirect</title></head>\n" ++
-            "<body>\n<script>\n" ++
-            "(function () {\n" ++
-            "  var oauth2 = window.opener && window.opener.swaggerUIRedirectOauth2;\n" ++
-            "  if (!oauth2) { window.close(); return; }\n" ++
-            "  var query = (window.location.hash || window.location.search || '').replace(/^[#?]/, '');\n" ++
-            "  var params = {};\n" ++
-            "  query.split('&').forEach(function (part) {\n" ++
-            "    if (!part) return;\n" ++
-            "    var pair = part.split('=');\n" ++
-            "    params[decodeURIComponent(pair[0])] = decodeURIComponent((pair[1] || '').replace(/\\+/g, ' '));\n" ++
-            "  });\n" ++
-            "  if (params.state !== oauth2.state) {\n" ++
-            "    oauth2.errCb({ authId: oauth2.auth && oauth2.auth.name, source: 'oauth2-redirect', level: 'warning', message: 'OAuth2 state mismatch' });\n" ++
-            "  } else if (params.code) {\n" ++
-            "    oauth2.callback({ auth: oauth2.auth, redirectUrl: oauth2.redirectUrl, code: params.code });\n" ++
-            "  } else {\n" ++
-            "    oauth2.callback({ auth: oauth2.auth, token: params, isValid: true, redirectUrl: oauth2.redirectUrl });\n" ++
-            "  }\n" ++
-            "  window.close();\n" ++
-            "}());\n" ++
-            "</script>\n</body>\n</html>",
-    );
-}
-
-fn writeRedocHtml(writer: *std.Io.Writer, title: []const u8, openapi_url: []const u8) !void {
-    try writer.writeAll("<!doctype html>\n<html>\n<head><title>");
-    try writeHtmlText(writer, title);
-    try writer.writeAll(" - ReDoc</title></head>\n<body>\n<redoc spec-url=\"");
-    try writeHtmlAttribute(writer, openapi_url);
-    try writer.writeAll("\"></redoc>\n<script src=\"https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js\"></script>\n</body>\n</html>");
-}
-
-fn writeHtmlText(writer: *std.Io.Writer, value: []const u8) !void {
-    for (value) |ch| {
-        switch (ch) {
-            '&' => try writer.writeAll("&amp;"),
-            '<' => try writer.writeAll("&lt;"),
-            '>' => try writer.writeAll("&gt;"),
-            else => try writer.writeByte(ch),
-        }
-    }
-}
-
-fn writeHtmlAttribute(writer: *std.Io.Writer, value: []const u8) !void {
-    for (value) |ch| {
-        switch (ch) {
-            '&' => try writer.writeAll("&amp;"),
-            '"' => try writer.writeAll("&quot;"),
-            '<' => try writer.writeAll("&lt;"),
-            '>' => try writer.writeAll("&gt;"),
-            else => try writer.writeByte(ch),
-        }
-    }
-}
-
-fn writeJavaScriptStringContents(writer: *std.Io.Writer, value: []const u8) !void {
-    for (value) |ch| {
-        switch (ch) {
-            '"' => try writer.writeAll("\\\""),
-            '\\' => try writer.writeAll("\\\\"),
-            '\n' => try writer.writeAll("\\n"),
-            '\r' => try writer.writeAll("\\r"),
-            '\t' => try writer.writeAll("\\t"),
-            '<' => try writer.writeAll("\\u003c"),
-            '>' => try writer.writeAll("\\u003e"),
-            '&' => try writer.writeAll("\\u0026"),
-            0x00...0x08 => try writer.print("\\u{x:0>4}", .{ch}),
-            0x0b...0x0c => try writer.print("\\u{x:0>4}", .{ch}),
-            0x0e...0x1f => try writer.print("\\u{x:0>4}", .{ch}),
-            else => try writer.writeByte(ch),
-        }
-    }
-}
+const writeSwaggerUiHtml = docs_ui.writeSwaggerUiHtml;
+const writeSwaggerUiOAuth2RedirectHtml = docs_ui.writeSwaggerUiOAuth2RedirectHtml;
+const writeRedocHtml = docs_ui.writeRedocHtml;
 
 fn expectJsonEqual(expected_json: []const u8, actual_json: []const u8) !void {
     const expected = try std.json.parseFromSlice(std.json.Value, testing.allocator, expected_json, .{});
@@ -14196,24 +11003,24 @@ fn requestShutdown(ctx: *Context) !Text {
     return .{ .text = "stopping" };
 }
 
-fn appendLifecycleEvent(app: *App, event: []const u8) !void {
+fn appendLifecycleEvent(app: *ZAPI, event: []const u8) !void {
     const state = app.state(LifecycleState);
     try state.events.append(app.allocator, event);
 }
 
-fn parentStartup(app: *App) !void {
+fn parentStartup(app: *ZAPI) !void {
     try appendLifecycleEvent(app, "parent-startup");
 }
 
-fn childStartup(app: *App) !void {
+fn childStartup(app: *ZAPI) !void {
     try appendLifecycleEvent(app, "child-startup");
 }
 
-fn parentShutdown(app: *App) !void {
+fn parentShutdown(app: *ZAPI) !void {
     try appendLifecycleEvent(app, "parent-shutdown");
 }
 
-fn childShutdown(app: *App) !void {
+fn childShutdown(app: *ZAPI) !void {
     try appendLifecycleEvent(app, "child-shutdown");
 }
 
@@ -14477,32 +11284,32 @@ fn decompressGzipForTest(allocator: std.mem.Allocator, compressed: []const u8) !
     return output.toOwnedSlice();
 }
 
-fn serveBoundOnce(app: *App, io: std.Io, listener: *std.Io.net.Server) !void {
+fn serveBoundOnce(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server) !void {
     try app.serveListener(io, listener, .{ .max_connections = 1 });
 }
 
-fn serveBoundStreamingOnce(app: *App, io: std.Io, listener: *std.Io.net.Server) !void {
+fn serveBoundStreamingOnce(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server) !void {
     try app.serveListener(io, listener, .{
         .max_connections = 1,
         .buffer_request_body = false,
     });
 }
 
-fn serveBoundConcurrentTwo(app: *App, io: std.Io, listener: *std.Io.net.Server) !void {
+fn serveBoundConcurrentTwo(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server) !void {
     try app.serveListener(io, listener, .{
         .max_connections = 2,
         .concurrent_connections = true,
     });
 }
 
-fn serveUntilShutdown(app: *App, io: std.Io, listener: *std.Io.net.Server, shutdown_signal: *ShutdownSignal) !void {
+fn serveUntilShutdown(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server, shutdown_signal: *ShutdownSignal) !void {
     try app.serveListener(io, listener, .{ .shutdown_signal = shutdown_signal });
 }
 
 fn exerciseRegistrationAllocationFailures(gpa: std.mem.Allocator) !void {
-    var child = App.init(gpa, .{});
+    var child = ZAPI.init(gpa, .{});
     defer child.deinit();
-    var app = App.init(gpa, .{});
+    var app = ZAPI.init(gpa, .{});
     defer app.deinit();
 
     try app.addPathConvertor("slug", slugMatches);
@@ -14544,7 +11351,7 @@ test "request parsers reject arbitrary input without leaking" {
 }
 
 test "handles registered routes and serializes json" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", hello, .{ .summary = "Hello world" }));
 
@@ -14556,7 +11363,7 @@ test "handles registered routes and serializes json" {
 }
 
 test "parses json bodies and route status metadata" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{ .status = .created }));
     try app.route(Route.post("/maybe-users", maybeCreateUser, .{}));
@@ -14625,7 +11432,7 @@ test "parses json bodies and route status metadata" {
 }
 
 test "parses json object maps" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/scores", echoScores, .{}));
 
@@ -14645,7 +11452,7 @@ test "parses json object maps" {
 }
 
 test "parses and returns direct json arrays" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/users/bulk", echoCreateUsers, .{}));
     try app.route(Route.get("/users/bulk", listCreateUsers, .{}));
@@ -14692,7 +11499,7 @@ test "request stream iterates body chunks" {
 }
 
 test "handlers can read streaming request bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/stream", streamBody, .{}));
 
@@ -14715,7 +11522,7 @@ test "handlers can read streaming request bodies" {
 }
 
 test "app handle enforces configured request body size limit" {
-    var limited_app = App.init(testing.allocator, .{ .max_request_body_size = 8 });
+    var limited_app = ZAPI.init(testing.allocator, .{ .max_request_body_size = 8 });
     defer limited_app.deinit();
     try limited_app.route(Route.post("/users", createUser, .{}));
 
@@ -14726,7 +11533,7 @@ test "app handle enforces configured request body size limit" {
     try testing.expectEqual(Status.payload_too_large, too_large.status);
     try testing.expectEqualStrings("{\"detail\":\"Request body too large\"}", too_large.body.items);
 
-    var unlimited_app = App.init(testing.allocator, .{ .max_request_body_size = null });
+    var unlimited_app = ZAPI.init(testing.allocator, .{ .max_request_body_size = null });
     defer unlimited_app.deinit();
     try unlimited_app.route(Route.post("/users", createUser, .{ .status = .created }));
 
@@ -14739,7 +11546,7 @@ test "app handle enforces configured request body size limit" {
 }
 
 test "request body limit middleware applies globally routes and routers" {
-    var global_app = App.init(testing.allocator, .{});
+    var global_app = ZAPI.init(testing.allocator, .{});
     defer global_app.deinit();
     try global_app.addMiddleware(requestBodyLimitMiddleware(.{ .max_size = 4 }));
     try global_app.route(Route.post("/body", bodySize, .{}));
@@ -14758,7 +11565,7 @@ test "request body limit middleware applies globally routes and routers" {
     try testing.expectEqual(Status.payload_too_large, global_blocked.status);
     try testing.expectEqualStrings("{\"detail\":\"Request body too large\"}", global_blocked.body.items);
 
-    var route_app = App.init(testing.allocator, .{});
+    var route_app = ZAPI.init(testing.allocator, .{});
     defer route_app.deinit();
     try route_app.route(Route.post("/open", bodySize, .{}));
     try route_app.route(Route.post("/limited", bodySize, .{
@@ -14782,7 +11589,7 @@ test "request body limit middleware applies globally routes and routers" {
     try testing.expectEqual(Status.payload_too_large, route_blocked.status);
     try testing.expectEqualStrings("{\"detail\":\"Route body too large\"}", route_blocked.body.items);
 
-    var router_app = App.init(testing.allocator, .{});
+    var router_app = ZAPI.init(testing.allocator, .{});
     defer router_app.deinit();
     const api = Router.init(.{
         .prefix = "/api",
@@ -14810,7 +11617,7 @@ test "request body limit middleware applies globally routes and routers" {
 }
 
 test "raw request helpers read decoded query cookies and path params" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/raw/{item:path}", echoRawRequest, .{}));
 
@@ -14909,7 +11716,7 @@ test "raw request helpers read decoded query cookies and path params" {
 }
 
 test "request handler arguments expose matched path params" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/method", echoRequestArgumentMethod, .{}));
     try app.route(Route.get("/request-path/{item}", echoRequestPathParams, .{}));
@@ -14950,7 +11757,7 @@ test "request handler arguments expose matched path params" {
 }
 
 test "request helpers negotiate content types and accept headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/negotiate", echoNegotiation, .{}));
 
@@ -15083,7 +11890,7 @@ test "request cookies merge multiple cookie headers" {
 }
 
 test "request builder owns headers cookies and bodies for app handle" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/raw/{item:path}", echoRawRequest, .{}));
     try app.route(Route.get("/tags", searchTags, .{}));
@@ -15340,7 +12147,7 @@ test "request builder owns headers cookies and bodies for app handle" {
 }
 
 test "response json helper parses typed response bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{ .status = .created }));
     try app.route(Route.get("/users/bulk", listCreateUsers, .{}));
@@ -15368,7 +12175,7 @@ test "response json helper parses typed response bodies" {
 }
 
 test "request builder can follow redirects like an in-process client" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/users", plainText, .{}));
     try app.route(Route.get("/redirect", redirectToUsers, .{}));
@@ -15674,7 +12481,7 @@ test "request builder can follow redirects like an in-process client" {
 }
 
 test "test client keeps default headers and cookies across requests" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/headers", echoHeaders, .{}));
     try app.route(Route.get("/set-cookie", setCookieResponse, .{}));
@@ -15846,7 +12653,7 @@ test "test client keeps default headers and cookies across requests" {
 }
 
 test "test client keeps default query params across requests" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/raw/{item:path}", echoRawRequest, .{}));
     try app.route(Route.get("/query-auth", secureQueryKey, .{}));
@@ -15931,7 +12738,7 @@ test "test client keeps default query params across requests" {
 }
 
 test "test client sends default headers and allows overrides" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/headers", echoHeaders, .{}));
     try app.route(Route.get("/client-headers", echoClientHeaderDefaults, .{}));
@@ -16025,7 +12832,7 @@ test "test client sends default headers and allows overrides" {
 }
 
 test "test client respects response cookie domain and path scope" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/set-example-domain-cookie", setExampleDomainCookie, .{}));
     try app.route(Route.get("/set-other-domain-cookie", setOtherDomainCookie, .{}));
@@ -16152,7 +12959,7 @@ test "test client respects response cookie domain and path scope" {
 }
 
 test "test client can raise or capture server exceptions" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addExceptionHandler(error.Teapot, handleTeapot);
     try app.route(Route.get("/handled", failingRoute, .{}));
@@ -16224,9 +13031,9 @@ test "test client can raise or capture server exceptions" {
     defer captured_route_middleware.deinit(testing.allocator);
     try testing.expectEqual(Status.internal_server_error, captured_route_middleware.status);
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
     try child.route(Route.get("/unhandled", unhandledFailingRoute, .{}));
     try parent.mount("/child", &child);
@@ -16243,7 +13050,7 @@ test "test client can raise or capture server exceptions" {
 }
 
 test "test client can leave redirects unfollowed while keeping response cookies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/redirect-set-cookie", redirectWithCookie, .{}));
     try app.route(Route.get("/redirect-cookies", echoRedirectCookies, .{}));
@@ -16269,7 +13076,7 @@ test "test client can leave redirects unfollowed while keeping response cookies"
 }
 
 test "test client can override redirect following per request" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/redirect-set-cookie", redirectWithCookie, .{}));
     try app.route(Route.get("/redirect-cookies", echoRedirectCookies, .{}));
@@ -16338,7 +13145,7 @@ test "test client can override redirect following per request" {
 }
 
 test "test client uses starlette style default request scope" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoRequestScope, .{}));
 
@@ -16360,7 +13167,7 @@ test "test client uses starlette style default request scope" {
 }
 
 test "test client applies request scope defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoRequestScope, .{}));
     try app.route(Route.get("/users", plainText, .{}));
@@ -16393,7 +13200,7 @@ test "test client applies request scope defaults" {
 }
 
 test "test client strips root path from relative targets like Starlette" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoNamedRootUrl, .{ .name = "homepage" }));
     try app.route(Route.get("/to-home", redirectToNamedRoot, .{}));
@@ -16436,9 +13243,9 @@ test "test client strips root path from relative targets like Starlette" {
 }
 
 test "url generation uses outer router from mounted apps with root path like Starlette" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
 
     try app.route(Route.get("/", echoMountedRootUrls, .{ .name = "index" }));
@@ -16467,7 +13274,7 @@ test "url generation uses outer router from mounted apps with root path like Sta
 }
 
 test "test client can derive request scope defaults from base url" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoRequestScope, .{}));
     try app.route(Route.get("/users", plainText, .{}));
@@ -16501,7 +13308,7 @@ test "test client can derive request scope defaults from base url" {
 }
 
 test "test client merges base url path into request url helpers like Starlette" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/bar", echoRequestUrlPath, .{}));
 
@@ -16518,7 +13325,7 @@ test "test client merges base url path into request url helpers like Starlette" 
 }
 
 test "test client accepts absolute request urls" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/target", echoRequestTarget, .{}));
     try app.route(Route.get("/apiary/target", echoRequestTarget, .{}));
@@ -16549,7 +13356,7 @@ test "test client accepts absolute request urls" {
 }
 
 test "test client rejects invalid absolute request urls" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoRequestScope, .{}));
 
@@ -16560,7 +13367,7 @@ test "test client rejects invalid absolute request urls" {
 }
 
 test "test client provides request client address" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/client", echoRequestClient, .{}));
     try app.route(Route.get("/redirect-client", redirectToClientEcho, .{}));
@@ -16590,7 +13397,7 @@ test "test client provides request client address" {
 }
 
 test "test client rejects invalid base url" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", echoRequestScope, .{}));
 
@@ -16601,7 +13408,7 @@ test "test client rejects invalid base url" {
 }
 
 test "test client has ergonomic method body helpers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{ .status = .created }));
     try app.route(Route.post("/raw-body", echoRawBody, .{}));
@@ -16990,7 +13797,7 @@ test "started test client runs lifespan handlers and can shut down explicitly" {
     var state: LifecycleState = .{};
     defer state.events.deinit(testing.allocator);
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.addStartupHandler(parentStartup);
@@ -17020,9 +13827,9 @@ test "started test client deinit shuts down mounted app lifespan" {
     var state: LifecycleState = .{};
     defer state.events.deinit(testing.allocator);
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
 
     parent.setState(&state);
@@ -17053,7 +13860,7 @@ test "started test client deinit shuts down mounted app lifespan" {
 }
 
 test "raw request helpers parse json and urlencoded form bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/raw-json", echoRawJson, .{}));
     try app.route(Route.post("/raw-form", echoRawForm, .{}));
@@ -17228,7 +14035,7 @@ test "supports routers with prefixes and path/query validation" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.includeRouter(users);
 
@@ -17265,7 +14072,7 @@ test "supports routers with prefixes and path/query validation" {
 }
 
 test "route registration rejects malformed and duplicate path parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     try testing.expectError(error.DuplicatePathParam, app.route(Route.get("/{id}/{id}", getUser, .{})));
@@ -17286,7 +14093,7 @@ test "route registration rejects malformed and duplicate path parameters" {
 }
 
 test "route registration rejects ambiguous duplicate route names" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     try app.route(Route.get("/users/{id:int}", getUser, .{ .name = "detail" }));
@@ -17314,7 +14121,7 @@ test "router registration rejects duplicate route names across prefixes" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     try app.includeRouter(users);
@@ -17337,7 +14144,7 @@ test "generated route names include router prefixes" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     try app.includeRouter(users);
@@ -17368,7 +14175,7 @@ test "explicit null route names remain unnamed under router prefixes" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.includeRouter(admin);
 
@@ -17387,7 +14194,7 @@ test "router route groups register multiple methods for one handler" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.includeRouter(router);
     try app.route(Route.methods("/direct", &.{ .PUT, .PATCH }, plainText, .{ .name = "direct_group" }));
@@ -17441,7 +14248,7 @@ test "nested routers preserve prefixes tags route groups and reversing" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.includeRouter(api);
 
@@ -17470,7 +14277,7 @@ test "nested routers preserve prefixes tags route groups and reversing" {
 }
 
 test "validates required query params and applies defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/search", searchUsers, .{}));
     try app.route(Route.get("/users/{id}", getUser, .{}));
@@ -17495,7 +14302,7 @@ test "validates required query params and applies defaults" {
 }
 
 test "openapi snapshot includes scalar query defaults" {
-    var app = App.init(testing.allocator, .{ .title = "Search API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Search API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/search", searchUsers, .{
         .name = "search_users",
@@ -17569,7 +14376,7 @@ test "openapi snapshot includes scalar query defaults" {
 }
 
 test "parses repeated query params into arrays" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/tags", searchTags, .{}));
 
@@ -17598,7 +14405,7 @@ test "parses repeated query params into arrays" {
 }
 
 test "validates enum path and query parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/states", echoQueryState, .{}));
     try app.route(Route.get("/states/{state}", echoPathState, .{ .name = "state_detail" }));
@@ -17627,7 +14434,7 @@ test "validates enum path and query parameters" {
 }
 
 test "validates typed headers with case-insensitive lookup and defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/headers", echoHeaders, .{}));
 
@@ -17667,7 +14474,7 @@ test "validates typed headers with case-insensitive lookup and defaults" {
 }
 
 test "parses repeated typed headers into arrays" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/header-list", echoHeaderList, .{}));
 
@@ -17687,7 +14494,7 @@ test "parses repeated typed headers into arrays" {
 }
 
 test "validates typed cookies with defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/cookies", echoCookies, .{}));
 
@@ -17723,7 +14530,7 @@ test "validates typed cookies with defaults" {
 }
 
 test "typed query header and cookie params use route aliases" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/aliases", echoAliasParams, .{
         .parameter_docs = &[_]OpenApiParameterDoc{
@@ -17754,7 +14561,7 @@ test "typed query header and cookie params use route aliases" {
 }
 
 test "validates urlencoded forms with defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/login", login, .{}));
     try app.route(Route.post("/preferences", preferences, .{}));
@@ -17821,7 +14628,7 @@ test "validates urlencoded forms with defaults" {
 }
 
 test "validates multipart forms with uploaded files" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/profile", uploadProfile, .{}));
     try app.route(Route.post("/gallery", uploadGallery, .{}));
@@ -17912,7 +14719,7 @@ test "validates multipart forms with uploaded files" {
 }
 
 test "validates bearer auth handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/me", secureMe, .{}));
 
@@ -17960,7 +14767,7 @@ test "validates bearer auth handler parameters" {
 }
 
 test "validates oauth2 password bearer handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/oauth2", secureOAuth2, .{}));
 
@@ -17994,7 +14801,7 @@ test "validates oauth2 password bearer handler parameters" {
 }
 
 test "validates oauth2 authorization code bearer handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/oauth2-code", secureOAuth2AuthorizationCode, .{}));
 
@@ -18014,7 +14821,7 @@ test "validates oauth2 authorization code bearer handler parameters" {
 }
 
 test "validates oauth2 client credentials bearer handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/oauth2-client", secureOAuth2ClientCredentials, .{}));
 
@@ -18034,7 +14841,7 @@ test "validates oauth2 client credentials bearer handler parameters" {
 }
 
 test "validates oauth2 implicit bearer handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/oauth2-implicit", secureOAuth2Implicit, .{}));
 
@@ -18054,7 +14861,7 @@ test "validates oauth2 implicit bearer handler parameters" {
 }
 
 test "validates basic auth handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/basic", secureBasic, .{}));
 
@@ -18102,7 +14909,7 @@ test "validates basic auth handler parameters" {
 }
 
 test "validates api key auth handler parameters" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/header", secureHeaderKey, .{}));
     try app.route(Route.get("/query", secureQueryKey, .{}));
@@ -18146,7 +14953,7 @@ test "validates api key auth handler parameters" {
 }
 
 test "test client sets default auth helpers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/bearer", secureMe, .{}));
     try app.route(Route.get("/basic", secureBasic, .{}));
@@ -18190,7 +14997,7 @@ test "test client sets default auth helpers" {
 }
 
 test "openapi snapshot includes path query and header parameters" {
-    var app = App.init(testing.allocator, .{ .title = "Param API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Param API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", userWithHeaders, .{
         .name = "user_with_headers",
@@ -18268,7 +15075,7 @@ test "openapi snapshot includes path query and header parameters" {
 }
 
 test "openapi snapshot includes documented parameters" {
-    var app = App.init(testing.allocator, .{ .title = "Documented Param API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Documented Param API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", userWithHeaders, .{
         .name = "documented_user_params",
@@ -18406,7 +15213,7 @@ test "openapi snapshot includes documented parameters" {
 }
 
 test "openapi snapshot includes parameter aliases" {
-    var app = App.init(testing.allocator, .{ .title = "Alias Param API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Alias Param API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/aliases", echoAliasParams, .{
         .name = "alias_params",
@@ -18506,7 +15313,7 @@ test "openapi snapshot includes parameter aliases" {
 }
 
 test "openapi snapshot includes array query parameters" {
-    var app = App.init(testing.allocator, .{ .title = "Array Query API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Array Query API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/tags", searchTags, .{
         .name = "search_tags",
@@ -18581,7 +15388,7 @@ test "openapi snapshot includes array query parameters" {
 }
 
 test "openapi snapshot includes array header parameters" {
-    var app = App.init(testing.allocator, .{ .title = "Array Header API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Array Header API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/header-list", echoHeaderList, .{
         .name = "header_list",
@@ -18654,7 +15461,7 @@ test "openapi snapshot includes array header parameters" {
 }
 
 test "openapi snapshot includes uuid parameter and body schemas" {
-    var app = App.init(testing.allocator, .{ .title = "UUID API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "UUID API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/widgets/{id:uuid}", echoUuid, .{
         .name = "get_uuid",
@@ -18772,7 +15579,7 @@ test "openapi snapshot includes uuid parameter and body schemas" {
 }
 
 test "openapi snapshot includes date and datetime schemas" {
-    var app = App.init(testing.allocator, .{ .title = "Date API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Date API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/dates", echoDate, .{
         .name = "get_dates",
@@ -18890,7 +15697,7 @@ test "openapi snapshot includes date and datetime schemas" {
 }
 
 test "openapi snapshot includes email schemas" {
-    var app = App.init(testing.allocator, .{ .title = "Email API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Email API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/emails", echoEmail, .{
         .name = "get_email",
@@ -19005,7 +15812,7 @@ test "openapi snapshot includes email schemas" {
 }
 
 test "openapi snapshot includes url schemas" {
-    var app = App.init(testing.allocator, .{ .title = "URL API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "URL API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/urls", echoUrlScalar, .{
         .name = "get_url",
@@ -19120,7 +15927,7 @@ test "openapi snapshot includes url schemas" {
 }
 
 test "openapi snapshot includes enum parameters and schemas" {
-    var app = App.init(testing.allocator, .{ .title = "Enum API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Enum API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/states", echoQueryState, .{
         .name = "query_state",
@@ -19228,7 +16035,7 @@ test "openapi snapshot includes enum parameters and schemas" {
 }
 
 test "openapi snapshot groups multiple methods under one path" {
-    var app = App.init(testing.allocator, .{ .title = "Grouped API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Grouped API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users", listUsers, .{
         .name = "list_users",
@@ -19398,7 +16205,7 @@ test "openapi snapshot groups multiple methods under one path" {
 }
 
 test "openapi snapshot normalizes typed path convertors" {
-    var app = App.init(testing.allocator, .{ .title = "Convertor API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Convertor API", .version = "1.0.0" });
     defer app.deinit();
     try app.addPathConvertor("slug", slugMatches);
     try app.route(Route.get("/items/{id:int}", getUser, .{
@@ -19517,7 +16324,7 @@ test "openapi snapshot normalizes typed path convertors" {
 }
 
 test "openapi snapshot includes documented response variants" {
-    var app = App.init(testing.allocator, .{ .title = "Responses API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Responses API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", getUser, .{
         .name = "get_user",
@@ -19635,7 +16442,7 @@ test "openapi snapshot includes documented response variants" {
 }
 
 test "openapi omits content for no body response statuses" {
-    var app = App.init(testing.allocator, .{ .title = "No Body API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "No Body API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.delete("/users/{id}", noBodyUser, .{
         .status = .no_content,
@@ -19712,7 +16519,7 @@ test "openapi omits content for no body response statuses" {
 }
 
 test "openapi snapshot includes documented response headers" {
-    var app = App.init(testing.allocator, .{ .title = "Response Header API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Response Header API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", getUser, .{
         .name = "get_user_headers",
@@ -19854,7 +16661,7 @@ test "openapi snapshot includes documented response headers" {
 }
 
 test "openapi snapshot includes request and response examples" {
-    var app = App.init(testing.allocator, .{ .title = "Examples API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Examples API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{
         .name = "create_user",
@@ -19998,7 +16805,7 @@ test "openapi snapshot includes request and response examples" {
 }
 
 test "openapi snapshot inlines nullable response schemas without component collisions" {
-    var app = App.init(testing.allocator, .{ .title = "Nullable Response API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Nullable Response API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", getUser, .{
         .name = "get_user",
@@ -20106,7 +16913,7 @@ test "openapi snapshot inlines nullable response schemas without component colli
 }
 
 test "openapi snapshot uses explicit json response inner schema" {
-    var app = App.init(testing.allocator, .{ .title = "Explicit JSON API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Explicit JSON API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/json", explicitJson, .{
         .name = "explicit_json",
@@ -20178,7 +16985,7 @@ test "openapi snapshot uses explicit json response inner schema" {
 }
 
 test "openapi snapshot includes schema free response media types" {
-    var app = App.init(testing.allocator, .{ .title = "Media API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Media API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/text", plainText, .{
         .name = "plain_text",
@@ -20343,7 +17150,7 @@ test "openapi snapshot includes schema free response media types" {
 }
 
 test "openapi snapshot includes bearer auth security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "Security API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Security API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/me", secureMe, .{
         .name = "secure_me",
@@ -20408,7 +17215,7 @@ test "openapi snapshot includes bearer auth security scheme" {
 }
 
 test "openapi snapshot includes oauth2 password bearer security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "OAuth2 API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "OAuth2 API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/oauth2", secureOAuth2, .{
         .name = "secure_oauth2",
@@ -20481,7 +17288,7 @@ test "openapi snapshot includes oauth2 password bearer security scheme" {
 }
 
 test "openapi snapshot includes oauth2 authorization code bearer security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "OAuth2 Code API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "OAuth2 Code API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/oauth2-code", secureOAuth2AuthorizationCode, .{
         .name = "secure_oauth2_code",
@@ -20555,7 +17362,7 @@ test "openapi snapshot includes oauth2 authorization code bearer security scheme
 }
 
 test "openapi snapshot includes oauth2 client credentials bearer security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "OAuth2 Client API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "OAuth2 Client API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/oauth2-client", secureOAuth2ClientCredentials, .{
         .name = "secure_oauth2_client",
@@ -20628,7 +17435,7 @@ test "openapi snapshot includes oauth2 client credentials bearer security scheme
 }
 
 test "openapi snapshot includes oauth2 implicit bearer security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "OAuth2 Implicit API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "OAuth2 Implicit API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/oauth2-implicit", secureOAuth2Implicit, .{
         .name = "secure_oauth2_implicit",
@@ -20701,7 +17508,7 @@ test "openapi snapshot includes oauth2 implicit bearer security scheme" {
 }
 
 test "openapi snapshot includes basic auth security scheme" {
-    var app = App.init(testing.allocator, .{ .title = "Basic Security API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Basic Security API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/basic", secureBasic, .{
         .name = "secure_basic",
@@ -20767,7 +17574,7 @@ test "openapi snapshot includes basic auth security scheme" {
 }
 
 test "openapi snapshot includes api key security schemes" {
-    var app = App.init(testing.allocator, .{ .title = "API Key Security", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "API Key Security", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/header", secureHeaderKey, .{
         .name = "secure_header_key",
@@ -20893,7 +17700,7 @@ test "openapi snapshot includes api key security schemes" {
 }
 
 test "openapi snapshot includes cookie parameters" {
-    var app = App.init(testing.allocator, .{ .title = "Cookie API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Cookie API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id}", userWithCookies, .{
         .name = "user_with_cookies",
@@ -20970,7 +17777,7 @@ test "openapi snapshot includes cookie parameters" {
 }
 
 test "openapi snapshot includes optional json request body" {
-    var app = App.init(testing.allocator, .{ .title = "Optional Body API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Optional Body API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/maybe-users", maybeCreateUser, .{
         .name = "maybe_create_user",
@@ -21061,7 +17868,7 @@ test "openapi snapshot includes optional json request body" {
 }
 
 test "openapi snapshot includes json object maps" {
-    var app = App.init(testing.allocator, .{ .title = "Map Body API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Map Body API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/scores", echoScores, .{
         .name = "echo_scores",
@@ -21137,7 +17944,7 @@ test "openapi snapshot includes json object maps" {
 }
 
 test "openapi snapshot includes explicit main response description" {
-    var app = App.init(testing.allocator, .{ .title = "Response Description API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Response Description API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/text", plainText, .{
         .name = "text_operation",
@@ -21183,7 +17990,7 @@ test "openapi snapshot includes explicit main response description" {
 }
 
 test "openapi snapshot inlines direct json array bodies and responses" {
-    var app = App.init(testing.allocator, .{ .title = "Array Body API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Array Body API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/bulk", listCreateUsers, .{
         .name = "list_create_users",
@@ -21305,7 +18112,7 @@ test "openapi snapshot inlines direct json array bodies and responses" {
 }
 
 test "openapi snapshot includes methods route groups" {
-    var app = App.init(testing.allocator, .{ .title = "Route Group API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Route Group API", .version = "1.0.0" });
     defer app.deinit();
     const router = Router.init(.{
         .tags = &.{"tools"},
@@ -21384,7 +18191,7 @@ test "openapi snapshot includes methods route groups" {
 }
 
 test "openapi snapshot includes nested router prefixes and tags" {
-    var app = App.init(testing.allocator, .{ .title = "Nested Router API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Nested Router API", .version = "1.0.0" });
     defer app.deinit();
 
     const users = comptime Router.init(.{
@@ -21498,7 +18305,7 @@ test "openapi snapshot includes nested router prefixes and tags" {
 }
 
 test "openapi snapshot includes form request body" {
-    var app = App.init(testing.allocator, .{ .title = "Form API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Form API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/login", login, .{
         .name = "login",
@@ -21591,7 +18398,7 @@ test "openapi snapshot includes form request body" {
 }
 
 test "openapi snapshot includes repeated form fields" {
-    var app = App.init(testing.allocator, .{ .title = "Preferences API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Preferences API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/preferences", preferences, .{
         .name = "save_preferences",
@@ -21683,7 +18490,7 @@ test "openapi snapshot includes repeated form fields" {
 }
 
 test "openapi snapshot includes multipart file request body" {
-    var app = App.init(testing.allocator, .{ .title = "Upload API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Upload API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/profile", uploadProfile, .{
         .name = "upload_profile",
@@ -21775,7 +18582,7 @@ test "openapi snapshot includes multipart file request body" {
 }
 
 test "openapi snapshot includes repeated multipart file fields" {
-    var app = App.init(testing.allocator, .{ .title = "Gallery API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Gallery API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/gallery", uploadGallery, .{
         .name = "upload_gallery",
@@ -21867,7 +18674,7 @@ test "openapi snapshot includes repeated multipart file fields" {
 }
 
 test "returns not found and method not allowed like Starlette-style routing" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", hello, .{}));
 
@@ -21893,7 +18700,7 @@ test "returns not found and method not allowed like Starlette-style routing" {
 }
 
 test "method not allowed allow header deduplicates explicit and implicit head" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.head("/resource", explicitHead, .{}));
     try app.route(Route.get("/resource", plainText, .{}));
@@ -21905,7 +18712,7 @@ test "method not allowed allow header deduplicates explicit and implicit head" {
 }
 
 test "explicit options routes override automatic options" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/resource", plainText, .{}));
     try app.route(Route.options("/resource", echoRequestMethod, .{}));
@@ -21964,7 +18771,7 @@ test "response status helpers classify status code ranges" {
     try testing.expect(Status.internal_server_error.isError());
     try testing.expect(!Status.ok.isInformational());
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
     try app.route(Route.get("/redirect", redirectToUsers, .{}));
@@ -22027,7 +18834,7 @@ test "response status helpers classify status code ranges" {
 }
 
 test "supports trace routes through app test client and std.http adapter" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.trace("/trace", echoRequestMethod, .{}));
 
@@ -22066,7 +18873,7 @@ test "supports trace routes through app test client and std.http adapter" {
 }
 
 test "supports connect routes through app test client and std.http adapter" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.connect("/connect", echoRequestMethod, .{}));
     try app.route(Route.get("/connect-query", echoRequestTarget, .{}));
@@ -22112,7 +18919,7 @@ test "supports connect routes through app test client and std.http adapter" {
 }
 
 test "supports text redirect custom payload and head responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
     try app.route(Route.get("/html", htmlPage, .{}));
@@ -22272,7 +19079,7 @@ test "supports template responses" {
     });
 
     var state = TemplateState{ .dir = tmp.dir };
-    var app = App.init(testing.allocator, .{ .io = testing.io });
+    var app = ZAPI.init(testing.allocator, .{ .io = testing.io });
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/template", templatePage, .{}));
@@ -22298,7 +19105,7 @@ test "supports template responses" {
 }
 
 test "supports event stream responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/events", richEventStream, .{}));
 
@@ -22333,7 +19140,7 @@ test "supports transport streaming responses" {
     const chunks = [_][]const u8{ "hello ", "stream" };
 
     var state = StreamingState{ .chunks = &chunks };
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/stream", streamingPlainText, .{}));
@@ -22355,7 +19162,7 @@ test "supports transport streaming responses" {
     try testing.expectEqual(@as(usize, 4), state.writes);
 
     var http_state = StreamingState{ .chunks = &chunks };
-    var http_app = App.init(testing.allocator, .{});
+    var http_app = ZAPI.init(testing.allocator, .{});
     defer http_app.deinit();
     http_app.setState(&http_state);
     try http_app.route(Route.get("/stream", streamingPlainText, .{}));
@@ -22383,7 +19190,7 @@ test "supports transport streaming responses" {
 }
 
 test "supports websocket routes through std.http adapter" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     const router = Router.init(.{
         .routes = .{
@@ -22530,7 +19337,7 @@ test "response payload conditional requests return not modified" {
     const last_modified = try httpDateAlloc(testing.allocator, conditional_last_modified_seconds);
     defer testing.allocator.free(last_modified);
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/conditional", conditionalPayload, .{}));
     try app.route(Route.post("/conditional", conditionalPayload, .{}));
@@ -22615,7 +19422,7 @@ test "supports file responses" {
     defer cwd.deleteFile(testing.io, test_file_response_path) catch {};
 
     var state: BackgroundState = .{};
-    var app = App.init(testing.allocator, .{ .io = testing.io });
+    var app = ZAPI.init(testing.allocator, .{ .io = testing.io });
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/download", downloadFile, .{}));
@@ -22855,7 +19662,7 @@ test "supports file responses" {
 }
 
 test "file responses require io and surface missing files as server errors" {
-    var no_io_app = App.init(testing.allocator, .{});
+    var no_io_app = ZAPI.init(testing.allocator, .{});
     defer no_io_app.deinit();
     try no_io_app.route(Route.get("/download", downloadFile, .{}));
 
@@ -22864,7 +19671,7 @@ test "file responses require io and surface missing files as server errors" {
     try testing.expectEqual(Status.internal_server_error, no_io.status);
     try testing.expectEqualStrings("{\"detail\":\"Internal server error\"}", no_io.body.items);
 
-    var app = App.init(testing.allocator, .{ .io = testing.io });
+    var app = ZAPI.init(testing.allocator, .{ .io = testing.io });
     defer app.deinit();
     try app.route(Route.get("/missing-file", missingFile, .{}));
 
@@ -22875,7 +19682,7 @@ test "file responses require io and surface missing files as server errors" {
 }
 
 test "context problem returns structured json error responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/problem", problemResponse, .{}));
     try app.route(Route.get("/limited", problemWithHeaderResponse, .{}));
@@ -22922,7 +19729,7 @@ test "context problem returns structured json error responses" {
 }
 
 test "framework problem responses escape json details" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     var response = try app.problem(.bad_request, "Bad \"input\"\nagain");
     defer response.deinit(testing.allocator);
@@ -22934,7 +19741,7 @@ test "framework problem responses escape json details" {
 
 test "runs response background tasks after app handle" {
     var state: BackgroundState = .{};
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/background", backgroundPayload, .{}));
@@ -22971,7 +19778,7 @@ test "background tasks accumulator transfers owned task slices" {
 
 test "background tasks accumulator runs after app handle" {
     var state: BackgroundState = .{};
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/background-list", backgroundTasksPayload, .{}));
@@ -22989,9 +19796,9 @@ test "lifespan handlers run in order and cascade through mounted apps" {
     var state: LifecycleState = .{};
     defer state.events.deinit(testing.allocator);
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
 
     parent.setState(&state);
@@ -23017,7 +19824,7 @@ test "serve runs lifespan handlers around listener lifecycle" {
     var state: LifecycleState = .{};
     defer state.events.deinit(testing.allocator);
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.addStartupHandler(parentStartup);
@@ -23032,7 +19839,7 @@ test "serve runs lifespan handlers around listener lifecycle" {
 }
 
 test "sets and deletes response cookies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/set-cookie", setCookieResponse, .{}));
     try app.route(Route.get("/delete-cookie", deleteCookieResponse, .{}));
@@ -23166,7 +19973,7 @@ test "sets and deletes response cookies" {
 
 test "response payload helpers own headers cookies and background tasks" {
     var state: BackgroundState = .{};
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/payload-helpers", payloadHelpersResponse, .{}));
@@ -23247,7 +20054,7 @@ test "response payload helpers own headers cookies and background tasks" {
 }
 
 test "middleware can mutate responses short circuit and preserve order" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.middleware(addMiddlewareHeader);
     try app.addMiddleware(blockMiddleware);
@@ -23277,7 +20084,7 @@ test "middleware can mutate responses short circuit and preserve order" {
 }
 
 test "middleware informational responses do not send content length or body" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(informationalMiddleware);
     try app.route(Route.get("/", plainText, .{}));
@@ -23291,7 +20098,7 @@ test "middleware informational responses do not send content length or body" {
 }
 
 test "method override middleware rewrites configured source methods before routing" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(methodOverrideMiddleware(.{}));
     try app.route(Route.get("/items/{id:int}", echoMethodAndBody, .{}));
@@ -23351,7 +20158,7 @@ test "method override middleware rewrites configured source methods before routi
 }
 
 test "response headers middleware sets preserves and appends configured headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(responseHeadersMiddleware(.{
         .headers = &.{
@@ -23376,7 +20183,7 @@ test "response headers middleware sets preserves and appends configured headers"
     try testing.expectEqualStrings("one", extra[0]);
     try testing.expectEqualStrings("two", extra[1]);
 
-    var preserve_app = App.init(testing.allocator, .{});
+    var preserve_app = ZAPI.init(testing.allocator, .{});
     defer preserve_app.deinit();
     try preserve_app.addMiddleware(responseHeadersMiddleware(.{
         .headers = &.{
@@ -23394,7 +20201,7 @@ test "response headers middleware sets preserves and appends configured headers"
 }
 
 test "route middleware applies only to selected routes and preserves app ordering" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(appendOrderOuter);
     try app.route(Route.get("/with", plainText, .{
@@ -23433,7 +20240,7 @@ test "route middleware applies only to selected routes and preserves app orderin
 }
 
 test "router middleware applies to contained routes and nested routers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     const nested = comptime Router.init(.{
@@ -23494,7 +20301,7 @@ test "router middleware applies to contained routes and nested routers" {
 }
 
 test "middleware can pass request state to handlers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(requestStateMiddleware);
     try app.route(Route.get("/state", echoRequestState, .{}));
@@ -23524,7 +20331,7 @@ test "middleware can pass request state to handlers" {
     try testing.expectEqualStrings("{\"app_state\":true,\"context_state\":true,\"request_state\":true,\"trace_id\":\"trace-456\"}", maybe.body.items);
     try testing.expectEqualStrings("yes", maybe.header("x-handler-seen-state").?);
 
-    var bare = App.init(testing.allocator, .{});
+    var bare = ZAPI.init(testing.allocator, .{});
     defer bare.deinit();
     try bare.route(Route.get("/maybe-state", echoMaybeState, .{}));
     try testing.expect(bare.maybeState(BackgroundState) == null);
@@ -23535,7 +20342,7 @@ test "middleware can pass request state to handlers" {
 }
 
 test "session middleware signs persists ignores tampering and clears cookies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(sessionMiddleware(.{
         .secret_key = "test-secret",
@@ -23644,7 +20451,7 @@ test "response headers can replace or append explicitly" {
 }
 
 test "gzip middleware compresses accepted response bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(gzipMiddleware(.{ .minimum_size = 10 }));
     try app.route(Route.get("/large", largePlainText, .{}));
@@ -23677,7 +20484,7 @@ test "gzip middleware compresses accepted response bodies" {
 }
 
 test "gzip middleware skips small unaccepted encoded and event stream responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(gzipMiddleware(.{ .minimum_size = 500 }));
     try app.route(Route.get("/small", plainText, .{}));
@@ -23714,7 +20521,7 @@ test "gzip middleware skips small unaccepted encoded and event stream responses"
 }
 
 test "gzip middleware respects accept encoding quality values" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(gzipMiddleware(.{ .minimum_size = 10 }));
     try app.route(Route.get("/large", largePlainText, .{}));
@@ -23744,7 +20551,7 @@ test "gzip middleware respects accept encoding quality values" {
 }
 
 test "cors middleware handles simple and preflight requests" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(corsMiddleware(.{
         .allow_origins = &.{"https://app.example"},
@@ -23850,7 +20657,7 @@ test "cors middleware handles simple and preflight requests" {
 }
 
 test "cors middleware mirrors wildcard origins for cookie requests" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(corsMiddleware(.{
         .allow_origins = &.{"*"},
@@ -23878,7 +20685,7 @@ test "cors middleware mirrors wildcard origins for cookie requests" {
 }
 
 test "cors middleware can allow all supported methods" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(corsMiddleware(.{
         .allow_origins = &.{"https://app.example"},
@@ -23918,7 +20725,7 @@ test "cors middleware can allow all supported methods" {
 }
 
 test "cors middleware supports wildcard origin patterns" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(corsMiddleware(.{
         .allow_origins = &.{},
@@ -23958,7 +20765,7 @@ test "cors middleware supports wildcard origin patterns" {
 }
 
 test "proxy headers middleware updates downstream scheme host and root path" {
-    var app = App.init(testing.allocator, .{ .title = "Proxy API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Proxy API", .version = "1.0.0" });
     defer app.deinit();
     try app.addMiddleware(proxyHeadersMiddleware(.{}));
     try app.addMiddleware(httpsRedirectMiddleware(.{}));
@@ -24048,7 +20855,7 @@ test "proxy headers middleware updates downstream scheme host and root path" {
 }
 
 test "request id middleware propagates request ids and optional defaults" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(requestIdMiddleware(.{}));
     try app.route(Route.get("/", plainText, .{}));
@@ -24070,7 +20877,7 @@ test "request id middleware propagates request ids and optional defaults" {
     defer empty.deinit(testing.allocator);
     try testing.expect(empty.header("x-request-id") == null);
 
-    var fallback_app = App.init(testing.allocator, .{});
+    var fallback_app = ZAPI.init(testing.allocator, .{});
     defer fallback_app.deinit();
     try fallback_app.addMiddleware(requestIdMiddleware(.{ .default_value = "generated-for-tests" }));
     try fallback_app.route(Route.get("/", plainText, .{}));
@@ -24082,7 +20889,7 @@ test "request id middleware propagates request ids and optional defaults" {
 }
 
 test "security headers middleware sets defaults configured values and preserves existing headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(securityHeadersMiddleware(.{}));
     try app.route(Route.get("/", plainText, .{}));
@@ -24097,7 +20904,7 @@ test "security headers middleware sets defaults configured values and preserves 
     try testing.expect(response.header("content-security-policy") == null);
     try testing.expect(response.header("strict-transport-security") == null);
 
-    var configured_app = App.init(testing.allocator, .{});
+    var configured_app = ZAPI.init(testing.allocator, .{});
     defer configured_app.deinit();
     try configured_app.addMiddleware(securityHeadersMiddleware(.{
         .frame_options = null,
@@ -24115,7 +20922,7 @@ test "security headers middleware sets defaults configured values and preserves 
     try testing.expectEqualStrings("default-src 'self'", configured.header("content-security-policy").?);
     try testing.expectEqualStrings("max-age=31536000", configured.header("strict-transport-security").?);
 
-    var preserve_app = App.init(testing.allocator, .{});
+    var preserve_app = ZAPI.init(testing.allocator, .{});
     defer preserve_app.deinit();
     try preserve_app.addMiddleware(securityHeadersMiddleware(.{}));
     try preserve_app.addMiddleware(setFrameOptionsMiddleware);
@@ -24128,7 +20935,7 @@ test "security headers middleware sets defaults configured values and preserves 
 }
 
 test "https redirect middleware redirects insecure requests" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(httpsRedirectMiddleware(.{}));
     try app.route(Route.get("/", plainText, .{}));
@@ -24155,7 +20962,7 @@ test "https redirect middleware redirects insecure requests" {
 }
 
 test "trusted host middleware validates host headers and redirects www" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(trustedHostMiddleware(.{
         .allowed_hosts = &.{ "example.com", "*.example.org" },
@@ -24191,7 +20998,7 @@ test "trusted host middleware validates host headers and redirects www" {
     try testing.expectEqual(Status.permanent_redirect, secure_redirect.status);
     try testing.expectEqualStrings("https://example.com/secure", secure_redirect.header("location").?);
 
-    var www_app = App.init(testing.allocator, .{});
+    var www_app = ZAPI.init(testing.allocator, .{});
     defer www_app.deinit();
     try www_app.addMiddleware(trustedHostMiddleware(.{
         .allowed_hosts = &.{"www.example.net"},
@@ -24220,7 +21027,7 @@ test "trusted host middleware validates host headers and redirects www" {
 }
 
 test "exception handlers customize route middleware and fallback errors" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addExceptionHandler(error.Teapot, handleTeapot);
     try app.addExceptionHandler(error.MiddlewareBoom, handleMiddlewareBoom);
@@ -24240,7 +21047,7 @@ test "exception handlers customize route middleware and fallback errors" {
     try testing.expectEqualStrings("application/json", unhandled.header("content-type").?);
     try testing.expectEqualStrings("{\"detail\":\"Internal server error\"}", unhandled.body.items);
 
-    var middleware_app = App.init(testing.allocator, .{});
+    var middleware_app = ZAPI.init(testing.allocator, .{});
     defer middleware_app.deinit();
     try middleware_app.addExceptionHandler(error.MiddlewareBoom, handleMiddlewareBoom);
     try middleware_app.addMiddleware(failMiddleware);
@@ -24253,7 +21060,7 @@ test "exception handlers customize route middleware and fallback errors" {
 }
 
 test "status handlers customize framework generated responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addStatusHandler(.not_found, handleStatusPlain);
     try app.addStatusHandler(.method_not_allowed, handleStatusPlain);
@@ -24281,7 +21088,7 @@ test "status handlers customize framework generated responses" {
 }
 
 test "status handler registration replaces existing handler" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addStatusHandler(.not_found, handleStatusPlain);
     try app.addStatusHandler(.not_found, handleStatusReplacement);
@@ -24293,7 +21100,7 @@ test "status handler registration replaces existing handler" {
 }
 
 test "exception handler registration replaces existing handler for an error" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addExceptionHandler(error.Teapot, handleTeapot);
     try app.addExceptionHandler(error.Teapot, handleTeapotReplacement);
@@ -24306,15 +21113,15 @@ test "exception handler registration replaces existing handler for an error" {
 }
 
 test "mounted sub applications route through prefixes middleware and url reversing" {
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
-    var nested = App.init(testing.allocator, .{});
+    var nested = ZAPI.init(testing.allocator, .{});
     defer nested.deinit();
-    var tenant_child = App.init(testing.allocator, .{});
+    var tenant_child = ZAPI.init(testing.allocator, .{});
     defer tenant_child.deinit();
-    var root_child = App.init(testing.allocator, .{});
+    var root_child = ZAPI.init(testing.allocator, .{});
     defer root_child.deinit();
 
     try parent.addMiddleware(addMiddlewareHeader);
@@ -24420,21 +21227,21 @@ test "mounted sub applications route through prefixes middleware and url reversi
 }
 
 test "host mounted applications route by host header" {
-    var www = App.init(testing.allocator, .{});
+    var www = ZAPI.init(testing.allocator, .{});
     defer www.deinit();
     try www.route(Route.get("/", plainText, .{}));
     try www.route(Route.get("/hosted", hostText, .{}));
 
-    var api = App.init(testing.allocator, .{});
+    var api = ZAPI.init(testing.allocator, .{});
     defer api.deinit();
     try api.route(Route.get("/users", listUsers, .{ .name = "users" }));
     try api.route(Route.get("/urls", hostedUrlEcho, .{}));
 
-    var subdomains = App.init(testing.allocator, .{});
+    var subdomains = ZAPI.init(testing.allocator, .{});
     defer subdomains.deinit();
     try subdomains.route(Route.get("/", hostParamEcho, .{ .name = "home" }));
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
     try parent.host("www.example.org", &www);
     try parent.hostNamed("api.example.org:3600", "api", &api);
@@ -24515,15 +21322,15 @@ test "host mounted applications route by host header" {
 }
 
 test "mount and host route specs register apps directly and through router specs" {
-    var api = App.init(testing.allocator, .{});
+    var api = ZAPI.init(testing.allocator, .{});
     defer api.deinit();
     try api.route(Route.get("/users", listUsers, .{ .name = "users" }));
 
-    var hosted = App.init(testing.allocator, .{});
+    var hosted = ZAPI.init(testing.allocator, .{});
     defer hosted.deinit();
     try hosted.route(Route.get("/hosted", hostText, .{ .name = "hosted" }));
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.mount("/direct", &api, .{ .name = "direct" }));
     try app.includeRouter(RouterSpec{
@@ -24624,11 +21431,11 @@ test "mount and host route specs register apps directly and through router specs
 }
 
 test "includeRoutes registers mixed Starlette style route objects at runtime" {
-    var api = App.init(testing.allocator, .{});
+    var api = ZAPI.init(testing.allocator, .{});
     defer api.deinit();
     try api.route(Route.get("/users", listUsers, .{ .name = "users" }));
 
-    var hosted = App.init(testing.allocator, .{});
+    var hosted = ZAPI.init(testing.allocator, .{});
     defer hosted.deinit();
     try hosted.route(Route.get("/hosted", hostText, .{ .name = "hosted" }));
 
@@ -24639,7 +21446,7 @@ test "includeRoutes registers mixed Starlette style route objects at runtime" {
         },
     });
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.includeRoutes(.{
         .prefix = "/v2",
@@ -24696,9 +21503,9 @@ test "includeRoutes registers mixed Starlette style route objects at runtime" {
 }
 
 test "mounted sub application docs and openapi use mount root path" {
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{ .title = "Child API", .version = "2.0.0" });
+    var child = ZAPI.init(testing.allocator, .{ .title = "Child API", .version = "2.0.0" });
     defer child.deinit();
     try parent.mount("/api", &child);
 
@@ -24742,259 +21549,8 @@ test "mounted sub application docs and openapi use mount root path" {
     );
 }
 
-test "static files serve mounted assets and html indexes" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(testing.io, "assets");
-    try tmp.dir.createDirPath(testing.io, "empty");
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/site.css", .data = "body { color: black; }" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/data.json", .data = "{}" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/icon.SVG", .data = "<svg></svg>" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/photo.jpeg", .data = "jpeg" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/preview.webp", .data = "webp" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/favicon.ico", .data = "ico" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/module.wasm", .data = "wasm" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/report.pdf", .data = "%PDF" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "index.html", .data = "<h1>Home</h1>" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/index.html", .data = "<h1>Assets</h1>" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "404.html", .data = "<h1>Missing</h1>" });
-
-    var static_files = try StaticFiles.init(testing.allocator, .{
-        .dir = tmp.dir,
-        .html = true,
-    });
-    defer static_files.deinit();
-
-    var metadata_static_files = try StaticFiles.init(testing.allocator, .{
-        .dir = tmp.dir,
-        .max_size = .limited(0),
-    });
-    defer metadata_static_files.deinit();
-
-    var parent = App.init(testing.allocator, .{ .io = testing.io });
-    defer parent.deinit();
-    try parent.mount("/static", &static_files.app);
-    try parent.mount("/metadata-static", &metadata_static_files.app);
-
-    var css = try parent.handle(Request.init(.GET, "/static/assets/site.css"));
-    defer css.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, css.status);
-    try testing.expectEqualStrings("text/css; charset=utf-8", css.header("content-type").?);
-    try testing.expectEqualStrings("22", css.header("content-length").?);
-    const css_etag = css.header("etag").?;
-    try testing.expectEqualStrings("bytes", css.header("accept-ranges").?);
-    const css_last_modified = css.header("last-modified").?;
-    try testing.expect(std.mem.endsWith(u8, css_last_modified, " GMT"));
-    try testing.expectEqualStrings("body { color: black; }", css.body.items);
-
-    var css_head = try parent.handle(Request.init(.HEAD, "/static/assets/site.css"));
-    defer css_head.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, css_head.status);
-    try testing.expectEqualStrings("text/css; charset=utf-8", css_head.header("content-type").?);
-    try testing.expectEqualStrings("22", css_head.header("content-length").?);
-    try testing.expectEqualStrings(css_etag, css_head.header("etag").?);
-    try testing.expectEqualStrings(css_last_modified, css_head.header("last-modified").?);
-    try testing.expectEqual(@as(usize, 0), css_head.body.items.len);
-
-    var metadata_head = try parent.handle(Request.init(.HEAD, "/metadata-static/assets/site.css"));
-    defer metadata_head.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, metadata_head.status);
-    try testing.expectEqualStrings("text/css; charset=utf-8", metadata_head.header("content-type").?);
-    try testing.expectEqualStrings("22", metadata_head.header("content-length").?);
-    try testing.expect(metadata_head.header("etag") != null);
-    try testing.expect(metadata_head.header("last-modified") != null);
-    try testing.expectEqual(@as(usize, 0), metadata_head.body.items.len);
-
-    var wrong_method = try parent.handle(Request.init(.POST, "/static/assets/site.css"));
-    defer wrong_method.deinit(testing.allocator);
-    try testing.expectEqual(Status.method_not_allowed, wrong_method.status);
-    try testing.expectEqualStrings("HEAD, GET, OPTIONS", wrong_method.header("allow").?);
-
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "assets/private.txt", .data = "secret" });
-    try tmp.dir.setFilePermissions(testing.io, "assets/private.txt", @enumFromInt(0o000), .{});
-    defer tmp.dir.setFilePermissions(testing.io, "assets/private.txt", @enumFromInt(0o666), .{}) catch {};
-    var private = try parent.handle(Request.init(.GET, "/static/assets/private.txt"));
-    defer private.deinit(testing.allocator);
-    try testing.expectEqual(Status.unauthorized, private.status);
-    try testing.expectEqualStrings("text/plain; charset=utf-8", private.header("content-type").?);
-    try testing.expectEqualStrings("Unauthorized", private.body.items);
-
-    const asset_content_types = &.{
-        .{ .path = "/static/assets/data.json", .content_type = "application/json" },
-        .{ .path = "/static/assets/icon.SVG", .content_type = "image/svg+xml" },
-        .{ .path = "/static/assets/photo.jpeg", .content_type = "image/jpeg" },
-        .{ .path = "/static/assets/preview.webp", .content_type = "image/webp" },
-        .{ .path = "/static/assets/favicon.ico", .content_type = "image/x-icon" },
-        .{ .path = "/static/assets/module.wasm", .content_type = "application/wasm" },
-        .{ .path = "/static/assets/report.pdf", .content_type = "application/pdf" },
-    };
-    inline for (asset_content_types) |case| {
-        var asset = try parent.handle(Request.init(.GET, case.path));
-        defer asset.deinit(testing.allocator);
-        try testing.expectEqual(Status.ok, asset.status);
-        try testing.expectEqualStrings(case.content_type, asset.header("content-type").?);
-    }
-
-    var conditional_req = Request.init(.GET, "/static/assets/site.css");
-    conditional_req.headers = &.{.{ .name = "if-none-match", .value = css_etag }};
-    var conditional = try parent.handle(conditional_req);
-    defer conditional.deinit(testing.allocator);
-    try testing.expectEqual(Status.not_modified, conditional.status);
-    try testing.expectEqualStrings(css_etag, conditional.header("etag").?);
-    try testing.expectEqualStrings(css_last_modified, conditional.header("last-modified").?);
-    try testing.expect(conditional.header("content-type") == null);
-    try testing.expect(conditional.header("content-length") == null);
-    try testing.expectEqual(@as(usize, 0), conditional.body.items.len);
-
-    var modified_since_req = Request.init(.GET, "/static/assets/site.css");
-    modified_since_req.headers = &.{.{ .name = "if-modified-since", .value = css_last_modified }};
-    var modified_since = try parent.handle(modified_since_req);
-    defer modified_since.deinit(testing.allocator);
-    try testing.expectEqual(Status.not_modified, modified_since.status);
-    try testing.expectEqualStrings(css_etag, modified_since.header("etag").?);
-    try testing.expectEqualStrings(css_last_modified, modified_since.header("last-modified").?);
-    try testing.expect(modified_since.header("content-type") == null);
-    try testing.expect(modified_since.header("content-length") == null);
-    try testing.expectEqual(@as(usize, 0), modified_since.body.items.len);
-
-    var range_req = Request.init(.GET, "/static/assets/site.css");
-    range_req.headers = &.{.{ .name = "range", .value = "bytes=0-3" }};
-    var range_response = try parent.handle(range_req);
-    defer range_response.deinit(testing.allocator);
-    try testing.expectEqual(Status.partial_content, range_response.status);
-    try testing.expectEqualStrings("bytes 0-3/22", range_response.header("content-range").?);
-    try testing.expectEqualStrings("4", range_response.header("content-length").?);
-    try testing.expectEqualStrings("body", range_response.body.items);
-
-    const expected_static_multipart =
-        "--zapi-boundary\r\n" ++
-        "Content-Type: text/css; charset=utf-8\r\n" ++
-        "Content-Range: bytes 0-3/22\r\n" ++
-        "\r\n" ++
-        "body\r\n" ++
-        "--zapi-boundary\r\n" ++
-        "Content-Type: text/css; charset=utf-8\r\n" ++
-        "Content-Range: bytes 14-18/22\r\n" ++
-        "\r\n" ++
-        "black\r\n" ++
-        "--zapi-boundary--";
-
-    var multipart_static_req = Request.init(.GET, "/static/assets/site.css");
-    multipart_static_req.headers = &.{.{ .name = "range", .value = "bytes=0-3,14-18" }};
-    var multipart_static = try parent.handle(multipart_static_req);
-    defer multipart_static.deinit(testing.allocator);
-    try testing.expectEqual(Status.partial_content, multipart_static.status);
-    try testing.expectEqualStrings("multipart/byteranges; boundary=zapi-boundary", multipart_static.header("content-type").?);
-    try testing.expect(multipart_static.header("content-range") == null);
-    try testing.expectEqualStrings("206", multipart_static.header("content-length").?);
-    try testing.expectEqualStrings(expected_static_multipart, multipart_static.body.items);
-
-    var malformed_range_req = Request.init(.GET, "/static/assets/site.css");
-    malformed_range_req.headers = &.{.{ .name = "range", .value = "items=0-3" }};
-    var malformed_range = try parent.handle(malformed_range_req);
-    defer malformed_range.deinit(testing.allocator);
-    try testing.expectEqual(Status.bad_request, malformed_range.status);
-    try testing.expectEqualStrings("text/plain; charset=utf-8", malformed_range.header("content-type").?);
-    try testing.expectEqualStrings("Only support bytes range", malformed_range.body.items);
-
-    var root_index = try parent.handle(Request.init(.GET, "/static"));
-    defer root_index.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, root_index.status);
-    try testing.expectEqualStrings("text/html; charset=utf-8", root_index.header("content-type").?);
-    try testing.expectEqualStrings("13", root_index.header("content-length").?);
-    try testing.expectEqualStrings("<h1>Home</h1>", root_index.body.items);
-
-    var nested_index = try parent.handle(Request.init(.GET, "/static/assets/"));
-    defer nested_index.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, nested_index.status);
-    try testing.expectEqualStrings("15", nested_index.header("content-length").?);
-    try testing.expectEqualStrings("<h1>Assets</h1>", nested_index.body.items);
-
-    var nested_redirect = try parent.handle(Request.init(.GET, "/static/assets?tab=main"));
-    defer nested_redirect.deinit(testing.allocator);
-    try testing.expectEqual(Status.temporary_redirect, nested_redirect.status);
-    try testing.expectEqualStrings("/static/assets/?tab=main", nested_redirect.header("location").?);
-    try testing.expectEqualStrings("0", nested_redirect.header("content-length").?);
-    try testing.expectEqual(@as(usize, 0), nested_redirect.body.items.len);
-
-    var missing_index = try parent.handle(Request.init(.GET, "/static/empty"));
-    defer missing_index.deinit(testing.allocator);
-    try testing.expectEqual(Status.not_found, missing_index.status);
-    try testing.expectEqualStrings("text/html; charset=utf-8", missing_index.header("content-type").?);
-    try testing.expectEqualStrings("16", missing_index.header("content-length").?);
-    try testing.expectEqualStrings("<h1>Missing</h1>", missing_index.body.items);
-
-    var custom_missing = try parent.handle(Request.init(.GET, "/static/missing-page"));
-    defer custom_missing.deinit(testing.allocator);
-    try testing.expectEqual(Status.not_found, custom_missing.status);
-    try testing.expectEqualStrings("text/html; charset=utf-8", custom_missing.header("content-type").?);
-    try testing.expectEqualStrings("<h1>Missing</h1>", custom_missing.body.items);
-}
-
-test "static files reject symlinks by default" {
-    if (builtin_mod.os.tag == .windows) return error.SkipZigTest;
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "secret.txt", .data = "secret" });
-    try tmp.dir.symLink(testing.io, "secret.txt", "public.txt", .{});
-
-    var static_files = try StaticFiles.init(testing.allocator, .{
-        .dir = tmp.dir,
-        .io = testing.io,
-    });
-    defer static_files.deinit();
-
-    var response = try static_files.app.handle(Request.init(.GET, "/public.txt"));
-    defer response.deinit(testing.allocator);
-    try testing.expectEqual(Status.not_found, response.status);
-}
-
-test "static files reject traversal malformed and missing paths" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "app.js", .data = "console.log('zapi');" });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "space file.txt", .data = "space" });
-
-    var static_files = try StaticFiles.init(testing.allocator, .{
-        .dir = tmp.dir,
-        .io = testing.io,
-    });
-    defer static_files.deinit();
-
-    var ok = try static_files.app.handle(Request.init(.GET, "/app.js"));
-    defer ok.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, ok.status);
-    try testing.expectEqualStrings("text/javascript; charset=utf-8", ok.header("content-type").?);
-    try testing.expectEqualStrings("20", ok.header("content-length").?);
-    try testing.expectEqualStrings("console.log('zapi');", ok.body.items);
-
-    var encoded_space = try static_files.app.handle(Request.init(.GET, "/space%20file.txt"));
-    defer encoded_space.deinit(testing.allocator);
-    try testing.expectEqual(Status.ok, encoded_space.status);
-    try testing.expectEqualStrings("space", encoded_space.body.items);
-
-    const rejected_paths = [_][]const u8{
-        "/missing.js",
-        "/../secret.txt",
-        "/%2e%2e/secret.txt",
-        "/app%00.js",
-        "/bad%ZZ.js",
-        "/assets//site.css",
-        "/./app.js",
-        "/assets\\site.css",
-    };
-
-    for (rejected_paths) |path| {
-        var response = try static_files.app.handle(Request.init(.GET, path));
-        defer response.deinit(testing.allocator);
-        try testing.expectEqual(Status.not_found, response.status);
-        try testing.expectEqualStrings("Not Found", response.body.items);
-    }
-}
-
 test "redirects trailing slash variants when an alternate route matches" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/users/{id}", getUser, .{}));
 
@@ -25008,7 +21564,7 @@ test "redirects trailing slash variants when an alternate route matches" {
     try testing.expectEqual(Status.temporary_redirect, wrong_method.status);
     try testing.expectEqualStrings("/users/42?verbose=true", wrong_method.header("location").?);
 
-    var strict_app = App.init(testing.allocator, .{ .redirect_slashes = false });
+    var strict_app = ZAPI.init(testing.allocator, .{ .redirect_slashes = false });
     defer strict_app.deinit();
     try strict_app.route(Route.get("/users/{id}", getUser, .{}));
     try strict_app.route(Route.get("/exact", plainText, .{}));
@@ -25025,7 +21581,7 @@ test "redirects trailing slash variants when an alternate route matches" {
 }
 
 test "typed path convertors constrain matching and capture path tails" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/users/{id:int}", getUser, .{}));
     try app.route(Route.get("/names/{username}", disableUser, .{}));
@@ -25111,7 +21667,7 @@ test "typed path convertors constrain matching and capture path tails" {
 }
 
 test "custom path convertors constrain matching and URL reversing" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     try testing.expectError(error.InvalidRoutePath, app.route(Route.get("/posts/{slug:slug}", getSlug, .{})));
@@ -25155,11 +21711,11 @@ test "custom path convertors constrain matching and URL reversing" {
 }
 
 test "custom path convertors apply to mounts and host patterns" {
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
-    var hosted = App.init(testing.allocator, .{});
+    var hosted = ZAPI.init(testing.allocator, .{});
     defer hosted.deinit();
 
     try parent.addPathConvertor("slug", slugMatches);
@@ -25208,7 +21764,7 @@ test "custom path convertors apply to mounts and host patterns" {
 }
 
 test "validates uuid scalar fields in paths queries and json bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/widgets/{id:uuid}", echoUuid, .{}));
     try app.route(Route.post("/uuids", createUuid, .{}));
@@ -25244,7 +21800,7 @@ test "validates uuid scalar fields in paths queries and json bodies" {
 }
 
 test "validates date and datetime scalar fields in queries and json bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/dates", echoDate, .{}));
     try app.route(Route.post("/dates", createDate, .{}));
@@ -25284,7 +21840,7 @@ test "validates date and datetime scalar fields in queries and json bodies" {
 }
 
 test "validates email scalar fields in queries and json bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/emails", echoEmail, .{}));
     try app.route(Route.post("/emails", createEmail, .{}));
@@ -25315,7 +21871,7 @@ test "validates email scalar fields in queries and json bodies" {
 }
 
 test "validates url scalar fields in queries and json bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/urls", echoUrlScalar, .{}));
     try app.route(Route.post("/urls", createUrlScalar, .{}));
@@ -25355,7 +21911,7 @@ test "validates url scalar fields in queries and json bodies" {
 }
 
 test "reverses named route URLs like Starlette url_path_for" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
     try app.route(Route.get("/unnamed/{id:int}", getUser, .{}));
@@ -25413,7 +21969,7 @@ test "reverses named route URLs like Starlette url_path_for" {
 }
 
 test "context reverses named routes and redirects with mount root path" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/users/{id:int}", getUser, .{ .name = "user_detail" }));
     try app.route(Route.get("/links/{id:int}", echoNamedUserPath, .{}));
@@ -25494,9 +22050,9 @@ test "context reverses named routes and redirects with mount root path" {
     try testing.expectEqualStrings("/users/8", redirect.header("location").?);
     try testing.expectEqual(@as(usize, 0), redirect.body.items.len);
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(testing.allocator, .{});
+    var child = ZAPI.init(testing.allocator, .{});
     defer child.deinit();
     try child.route(Route.get("/users/{id:int}", getUser, .{ .name = "user_detail" }));
     try child.route(Route.get("/links/{id:int}", echoNamedUserPath, .{}));
@@ -25555,9 +22111,9 @@ test "context reversed mounted URLs are owned by the handler allocator" {
     var child_gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = child_gpa.deinit();
 
-    var parent = App.init(testing.allocator, .{});
+    var parent = ZAPI.init(testing.allocator, .{});
     defer parent.deinit();
-    var child = App.init(child_gpa.allocator(), .{});
+    var child = ZAPI.init(child_gpa.allocator(), .{});
     defer child.deinit();
 
     try child.route(Route.get("/users/{id:int}", getUser, .{ .name = "user_detail" }));
@@ -25571,10 +22127,10 @@ test "context reversed mounted URLs are owned by the handler allocator" {
 }
 
 test "openapi output escapes metadata strings and emits operation ids" {
-    var app = App.init(testing.allocator, .{
+    var app = ZAPI.init(testing.allocator, .{
         .title = "Quoted \"API\"",
         .version = "0.1\n0",
-        .description = "App line\nbreak",
+        .description = "ZAPI line\nbreak",
         .terms_of_service = "https://example.com/terms?quoted=\"yes\"",
         .contact = .{
             .name = "Ada \"Ops\"",
@@ -25629,7 +22185,7 @@ test "openapi output escapes metadata strings and emits operation ids" {
         \\  "openapi": "3.1.0",
         \\  "info": {
         \\    "title": "Quoted \"API\"",
-        \\    "description": "App line\nbreak",
+        \\    "description": "ZAPI line\nbreak",
         \\    "termsOfService": "https://example.com/terms?quoted=\"yes\"",
         \\    "contact": {
         \\      "name": "Ada \"Ops\"",
@@ -25708,7 +22264,7 @@ test "openapi output escapes metadata strings and emits operation ids" {
 }
 
 test "openapi can hide routes and mark operations deprecated" {
-    var app = App.init(testing.allocator, .{ .title = "Schema Control API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Schema Control API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.post("/internal", hiddenInternal, .{
         .include_in_schema = false,
@@ -25775,7 +22331,7 @@ test "openapi can hide routes and mark operations deprecated" {
 }
 
 test "openapi operation id can differ from route name" {
-    var app = App.init(testing.allocator, .{ .title = "Operation ID API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Operation ID API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/users/{id:int}", getUser, .{
         .name = "user_detail",
@@ -25857,7 +22413,7 @@ test "openapi operation id can differ from route name" {
 }
 
 test "openapi emits extension status codes" {
-    var app = App.init(testing.allocator, .{ .title = "Custom Status API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Custom Status API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.get("/custom-status", customExtensionStatus, .{
         .status = Status.fromCode(299),
@@ -25901,7 +22457,7 @@ test "openapi emits extension status codes" {
 }
 
 test "openapi omits connect routes because OpenAPI path items do not define connect" {
-    var app = App.init(testing.allocator, .{ .title = "Connect API", .version = "1.0.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Connect API", .version = "1.0.0" });
     defer app.deinit();
     try app.route(Route.connect("/tunnel", echoRequestMethod, .{}));
     try app.route(Route.get("/mixed", echoRequestMethod, .{ .name = "get_mixed" }));
@@ -25953,7 +22509,7 @@ test "openapi omits connect routes because OpenAPI path items do not define conn
 }
 
 test "serves openapi and docs by default" {
-    var app = App.init(testing.allocator, .{ .title = "Hello Zapi", .version = "0.1.0" });
+    var app = ZAPI.init(testing.allocator, .{ .title = "Hello Zapi", .version = "0.1.0" });
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{ .status = .created, .summary = "Create user", .tags = &.{"users"} }));
 
@@ -26085,7 +22641,7 @@ test "serves openapi and docs by default" {
 }
 
 test "docs use configured openapi url" {
-    var app = App.init(testing.allocator, .{
+    var app = ZAPI.init(testing.allocator, .{
         .openapi_url = "/schema.json?format=\"openapi\"",
         .docs_url = "/documentation",
         .oauth2_redirect_url = "/documentation/oauth2-redirect",
@@ -26112,7 +22668,7 @@ test "docs use configured openapi url" {
 }
 
 test "swagger oauth2 redirect can be disabled with docs" {
-    var disabled_redirect = App.init(testing.allocator, .{ .oauth2_redirect_url = null });
+    var disabled_redirect = ZAPI.init(testing.allocator, .{ .oauth2_redirect_url = null });
     defer disabled_redirect.deinit();
 
     var docs = try disabled_redirect.handle(Request.init(.GET, "/docs"));
@@ -26124,7 +22680,7 @@ test "swagger oauth2 redirect can be disabled with docs" {
     defer missing_redirect.deinit(testing.allocator);
     try testing.expectEqual(Status.not_found, missing_redirect.status);
 
-    var disabled_docs = App.init(testing.allocator, .{ .docs_url = null });
+    var disabled_docs = ZAPI.init(testing.allocator, .{ .docs_url = null });
     defer disabled_docs.deinit();
     var stray_redirect = try disabled_docs.handle(Request.init(.GET, "/docs/oauth2-redirect"));
     defer stray_redirect.deinit(testing.allocator);
@@ -26132,7 +22688,7 @@ test "swagger oauth2 redirect can be disabled with docs" {
 }
 
 test "std.http adapter handles real parsed requests and writes responses" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{ .status = .created }));
 
@@ -26160,7 +22716,7 @@ test "std.http adapter handles real parsed requests and writes responses" {
 }
 
 test "std.http adapter owns framing and preserves head content length" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
     try app.route(Route.get("/manual", conflictingContentLength, .{}));
@@ -26195,7 +22751,7 @@ test "response headers reject invalid wire bytes" {
     try testing.expectError(error.InvalidHeader, response.appendHeader(testing.allocator, "bad:name", "value"));
     try testing.expectError(error.InvalidHeader, response.appendHeader(testing.allocator, "x-safe", "ok\r\nx-injected: yes"));
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", invalidResponseHeader, .{}));
     var rejected = try app.handle(Request.init(.GET, "/"));
@@ -26204,7 +22760,7 @@ test "response headers reject invalid wire bytes" {
 }
 
 test "std.http adapter preserves query strings and request headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/headers", echoHeaders, .{}));
 
@@ -26229,7 +22785,7 @@ test "std.http adapter preserves query strings and request headers" {
 }
 
 test "std.http adapter preserves cookie headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/cookies", echoCookies, .{}));
 
@@ -26252,7 +22808,7 @@ test "std.http adapter preserves cookie headers" {
 }
 
 test "std.http adapter writes set-cookie response headers" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/set-cookie", setCookieResponse, .{}));
 
@@ -26275,7 +22831,7 @@ test "std.http adapter writes set-cookie response headers" {
 }
 
 test "std.http adapter preserves urlencoded form bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/login", login, .{}));
 
@@ -26301,7 +22857,7 @@ test "std.http adapter preserves urlencoded form bodies" {
 }
 
 test "std.http adapter enforces configured request body size limit" {
-    var app = App.init(testing.allocator, .{ .max_request_body_size = 8 });
+    var app = ZAPI.init(testing.allocator, .{ .max_request_body_size = 8 });
     defer app.deinit();
     try app.route(Route.post("/users", createUser, .{}));
 
@@ -26327,7 +22883,7 @@ test "std.http adapter enforces configured request body size limit" {
 }
 
 test "std.http adapter uses status handlers for request body size limit" {
-    var app = App.init(testing.allocator, .{ .max_request_body_size = 8 });
+    var app = ZAPI.init(testing.allocator, .{ .max_request_body_size = 8 });
     defer app.deinit();
     try app.addStatusHandler(.payload_too_large, handleStatusPlain);
     try app.route(Route.post("/users", createUser, .{}));
@@ -26354,7 +22910,7 @@ test "std.http adapter uses status handlers for request body size limit" {
 }
 
 test "std.http adapter preserves chunked request bodies" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/body", bodySize, .{}));
 
@@ -26383,7 +22939,7 @@ test "std.http adapter preserves chunked request bodies" {
 }
 
 test "std.http streaming adapter exposes incremental request body reader" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/stream", streamReaderBody, .{}));
 
@@ -26412,7 +22968,7 @@ test "std.http streaming adapter exposes incremental request body reader" {
 }
 
 test "std.http adapter enforces configured chunked request body size limit" {
-    var app = App.init(testing.allocator, .{ .max_request_body_size = 5 });
+    var app = ZAPI.init(testing.allocator, .{ .max_request_body_size = 5 });
     defer app.deinit();
     try app.route(Route.post("/body", bodySize, .{}));
 
@@ -26442,7 +22998,7 @@ test "std.http adapter enforces configured chunked request body size limit" {
 }
 
 test "std.http streaming adapter enforces configured request body size limit while reading" {
-    var app = App.init(testing.allocator, .{ .max_request_body_size = 5 });
+    var app = ZAPI.init(testing.allocator, .{ .max_request_body_size = 5 });
     defer app.deinit();
     try app.route(Route.post("/stream", streamReaderBody, .{}));
 
@@ -26472,7 +23028,7 @@ test "std.http streaming adapter enforces configured request body size limit whi
 }
 
 test "std.http adapter preserves multipart form uploads" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/profile", uploadProfile, .{}));
 
@@ -26513,7 +23069,7 @@ test "std.http adapter preserves multipart form uploads" {
 }
 
 test "std.http adapter runs middleware chain" {
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.addMiddleware(addMiddlewareHeader);
     try app.route(Route.get("/", plainText, .{}));
@@ -26538,7 +23094,7 @@ test "std.http adapter runs middleware chain" {
 
 test "std.http adapter runs background tasks after responding" {
     var state: BackgroundState = .{};
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&state);
     try app.route(Route.get("/background", backgroundPayload, .{}));
@@ -26582,7 +23138,7 @@ test "std.http adapter runs background tasks after responding" {
 test "serveListener accepts tcp connections and serves app responses" {
     const io = testing.io;
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
 
@@ -26629,7 +23185,7 @@ test "serveListener accepts tcp connections and serves app responses" {
 test "serveListener can stream request bodies without adapter buffering" {
     const io = testing.io;
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.post("/stream", streamReaderBody, .{}));
 
@@ -26682,7 +23238,7 @@ test "serveListener can stream request bodies without adapter buffering" {
 test "serveListener can handle tcp connections concurrently" {
     const io = testing.io;
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     try app.route(Route.get("/", plainText, .{}));
 
@@ -26755,7 +23311,7 @@ test "serveListener stops after graceful shutdown signal is requested" {
     const io = testing.io;
 
     var shutdown_signal: ShutdownSignal = .{};
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
     app.setState(&shutdown_signal);
     try app.route(Route.get("/shutdown", requestShutdown, .{}));
@@ -26803,7 +23359,7 @@ test "serveListener stops after graceful shutdown signal is requested" {
 test "serve can bind and return when max connections is zero" {
     const io = testing.io;
 
-    var app = App.init(testing.allocator, .{});
+    var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
 
     const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);

@@ -8,7 +8,7 @@ icon: lucide/test-tube
 
 ```zig
 test "hello" {
-    var app = zapi.App.init(std.testing.allocator, .{});
+    var app = zapi.ZAPI.init(std.testing.allocator, .{});
     defer app.deinit();
 
     try app.includeRouter(zapi.Router.init(.{

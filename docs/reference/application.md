@@ -4,10 +4,10 @@ icon: lucide/app-window
 
 # Application
 
-Create an app with `App.init`.
+Create an app with `ZAPI.init`.
 
 ```zig
-var app = zapi.App.init(allocator, .{
+var app = zapi.ZAPI.init(allocator, .{
     .title = "My API",
     .version = "1.0.0",
 });
@@ -63,7 +63,7 @@ WebSocket routes run through the std.http adapter, use `WebSocketContext`, suppo
 
 `EventStream` responses are buffered server-sent event responses. They emit `text/event-stream`, split multi-line data into repeated `data:` lines, and support comments, event names, IDs, and retry delays.
 
-`StreamingResponse` responses write through a callback. `App.handle` collects them for in-process tests, while the std.http adapter sends them with `Transfer-Encoding: chunked`. The optional `context` pointer must outlive the response writer.
+`StreamingResponse` responses write through a callback. `ZAPI.handle` collects them for in-process tests, while the std.http adapter sends them with `Transfer-Encoding: chunked`. The optional `context` pointer must outlive the response writer.
 
 `File` responses require an app `io` handle. They infer `Content-Type` from `filename` when present, then from `path`, and use an explicit `content_type` when one is set. Single and multipart range requests and background tasks are supported. `HEAD`, `304`, and unsatisfiable range responses use file metadata without reading the body. Malformed `Range` headers return plain-text `400 Bad Request`; valid but unsatisfiable ranges return `416 Range Not Satisfiable`. Explicit `Content-Disposition` and `Accept-Ranges` headers are preserved instead of being replaced by generated defaults.
 

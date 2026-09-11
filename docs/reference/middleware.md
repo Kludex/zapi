@@ -77,5 +77,5 @@ fn endpoint(ctx: *zapi.Context) !struct { trace_id: ?[]const u8 } {
 }
 ```
 
-App state is available with `ctx.state(T)` inside handlers and `app.state(T)` outside them.
+Application state is available with `ctx.state(T)` inside handlers and `app.state(T)` outside them.
 Use `ctx.maybeState(T)` or `app.maybeState(T)` when the app state may not be installed.

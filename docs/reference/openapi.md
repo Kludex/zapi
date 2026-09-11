@@ -21,7 +21,7 @@ The route status becomes the main success response. Handler input wrappers becom
 
 Use `zapi.Json(T)` when a response helper should serialize a typed value and document `T` as the JSON response schema. Use `zapi.RawJson` for already-serialized JSON when the operation should advertise `application/json` without a schema.
 
-App options such as `title`, `version`, `description`, `terms_of_service`, `contact`, `license`, `openapi_servers`, `openapi_tags`, and `external_docs` populate the top-level OpenAPI document.
+Options passed to `ZAPI.init`, such as `title`, `version`, `description`, `terms_of_service`, `contact`, `license`, `openapi_servers`, `openapi_tags`, and `external_docs`, populate the top-level OpenAPI document.
 
 ## Operation Metadata
 

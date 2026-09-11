@@ -9,7 +9,7 @@ It takes two ideas seriously:
 
 There are no decorators in Zig. Instead, endpoints are normal functions and routes are a list of `Route` objects.
 
-The package entry point is `src/root.zig`. Protocol values, validated scalar types, templates, and server-sent event encoding live in focused leaf modules.
+The package entry point is `src/root.zig`. The source layout follows Starlette's domains. Applications, request values, responses, routing, authentication, middleware, WebSockets, and static files have separate modules. `src/root.zig` keeps the public API flat.
 
 ## Hello World
 
@@ -40,7 +40,7 @@ pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
 
-    var app = zapi.App.init(gpa.allocator(), .{
+    var app = zapi.ZAPI.init(gpa.allocator(), .{
         .title = "Hello Zapi",
         .version = "0.1.0",
     });
@@ -213,6 +213,8 @@ try app.includeRoutes(.{
 
 Sub-application pointers are runtime values, so the router value stores route-list literals by value and applies prefixes, tags, and middleware when it is included.
 
+Registered paths are compiled into a segment radix tree. Static segments use direct hash lookup, while typed parameter branches preserve route registration order. Matching allocates path parameters only after it selects an endpoint.
+
 Inside a handler, use `ctx.urlPathFor` to build a path for a named route. Use `ctx.urlFor` when the current request should provide an absolute URL with its scheme, host, and external root path. Use `ctx.redirectTo` when the response should redirect there.
 
 Routes without `.name` get a stable method-and-final-path name, such as `get_users_id`. Router prefixes are included.
@@ -223,7 +225,7 @@ Generated route paths percent-encode path parameter values.
 
 Reverse URL lookup fails when required params are missing or extra params are supplied.
 
-Trailing-slash redirects are enabled by default. Set `redirect_slashes = false` on `App.init` for strict path matching.
+Trailing-slash redirects are enabled by default. Set `redirect_slashes = false` on `ZAPI.init` for strict path matching.
 
 `GET` routes automatically handle `HEAD` when no explicit `HEAD` route exists. Routes also answer `OPTIONS` automatically with a deduplicated `Allow` header unless an explicit `OPTIONS` route is registered. `405 Method Not Allowed` responses include the same `Allow` header.
 
@@ -456,7 +458,7 @@ fn events(ctx: *zapi.Context) !zapi.EventStream {
 }
 ```
 
-Use `StreamingResponse` when the std.http adapter should write chunks directly with `Transfer-Encoding: chunked`. `App.handle` collects the same stream into `response.body` for tests. The optional `context` pointer must outlive the response writer.
+Use `StreamingResponse` when the std.http adapter should write chunks directly with `Transfer-Encoding: chunked`. `ZAPI.handle` collects the same stream into `response.body` for tests. The optional `context` pointer must outlive the response writer.
 
 ```zig
 fn writeStream(context: ?*anyopaque, writer: *std.Io.Writer) !void {
@@ -532,7 +534,7 @@ File responses include `Content-Length`, `ETag`, `Last-Modified`, single and mul
 For file responses, give the app an `std.Io` handle:
 
 ```zig
-var app = zapi.App.init(allocator, .{
+var app = zapi.ZAPI.init(allocator, .{
     .io = env.io,
 });
 
@@ -607,10 +609,10 @@ defer openapi.deinit(allocator);
 
 Swagger UI uses `/docs/oauth2-redirect` for OAuth2 authorization flows. Set `oauth2_redirect_url = null` to omit that helper route, or set it to a custom path when `docs_url` is customized.
 
-App metadata is emitted in the OpenAPI `info` object.
+Application metadata is emitted in the OpenAPI `info` object.
 
 ```zig
-var app = zapi.App.init(allocator, .{
+var app = zapi.ZAPI.init(allocator, .{
     .title = "Accounts API",
     .version = "1.0.0",
     .description = "Account operations.",
@@ -809,7 +811,7 @@ fn endpoint(ctx: *zapi.Context) !struct { trace_id: []const u8 } {
 }
 ```
 
-App state is available with `ctx.state(T)` inside handlers or `app.state(T)` outside them.
+Application state is available with `ctx.state(T)` inside handlers or `app.state(T)` outside them.
 Use `ctx.maybeState(T)` or `app.maybeState(T)` when the app state may not be installed.
 
 ## Testing
@@ -818,7 +820,7 @@ Use `app.handle` for in-process tests.
 
 ```zig
 test "hello" {
-    var app = zapi.App.init(std.testing.allocator, .{});
+    var app = zapi.ZAPI.init(std.testing.allocator, .{});
     defer app.deinit();
 
     try app.route(zapi.Route.get("/", hello, .{}));
@@ -1110,7 +1112,7 @@ For a blocking TCP server, pass Zig 0.16's `std.Io` from `main`.
 
 ```zig
 pub fn main(env: std.process.Init) !void {
-    var app = zapi.App.init(env.gpa, .{
+    var app = zapi.ZAPI.init(env.gpa, .{
         .title = "My API",
         .version = "0.1.0",
     });
@@ -1146,7 +1148,7 @@ pub fn main(env: std.process.Init) !void {
 - Validation failures as `422`, documented automatically in OpenAPI.
 - `404`, `405`, `Allow`, automatic `HEAD` and `OPTIONS`, and configurable method-independent trailing-slash redirects.
 - OpenAPI 3.1, Swagger UI, and ReDoc routes by default.
-- App-level OpenAPI metadata for description, terms, contact, license, servers, tags, and external docs.
+- Application-level OpenAPI metadata for description, terms, contact, license, servers, tags, and external docs.
 - JSON Schema component generation.
 - Automatic OpenAPI operation IDs.
 - Route-level OpenAPI hiding and deprecation markers.
@@ -1164,7 +1166,7 @@ pub fn main(env: std.process.Init) !void {
 - Static file serving with optional HTML index lookup, cache validators, and single or multipart `206` responses.
 - `std.http.Server.Request` adapter with buffered and opt-in streaming request bodies, `Content-Length`, chunked responses, WebSockets, and blocking `std.Io` serving.
 - Configurable request body size limits.
-- In-process tests through `App.handle`, `App.handleOrRaise`, `Response.statusCode`, `Response.text`, `Response.bytes`, `Response.reason`, `Response.requestUrl`, `Response.location`, `Response.nextUrl`, typed `Response.json`, parsed `Response.cookie` and `Response.cookies`, redirect `Response.history`, owned `Request.builder` helpers, typed query serialization, typed JSON body serialization, typed URL-encoded form serialization, encoded form fields, request scope helpers, WebSocket text and JSON exchanges with handshake and message helpers, and a persistent `TestClient` with base URLs, absolute request URLs, configurable client addresses, mutable default headers, query params, and cookies, domain/path-scoped response cookies, persisted cookie inspection and snapshots, request scope defaults, redirect following, client-level and per-request server-exception controls, and lifespan support.
+- In-process tests through `ZAPI.handle`, `ZAPI.handleOrRaise`, `Response.statusCode`, `Response.text`, `Response.bytes`, `Response.reason`, `Response.requestUrl`, `Response.location`, `Response.nextUrl`, typed `Response.json`, parsed `Response.cookie` and `Response.cookies`, redirect `Response.history`, owned `Request.builder` helpers, typed query serialization, typed JSON body serialization, typed URL-encoded form serialization, encoded form fields, request scope helpers, WebSocket text and JSON exchanges with handshake and message helpers, and a persistent `TestClient` with base URLs, absolute request URLs, configurable client addresses, mutable default headers, query params, and cookies, domain/path-scoped response cookies, persisted cookie inspection and snapshots, request scope defaults, redirect following, client-level and per-request server-exception controls, and lifespan support.
 
 ## Not Yet
 

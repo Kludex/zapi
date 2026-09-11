@@ -33,7 +33,7 @@ pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
 
-    var app = zapi.App.init(gpa.allocator(), .{
+    var app = zapi.ZAPI.init(gpa.allocator(), .{
         .title = "Hello Zapi",
         .version = "0.1.0",
     });
@@ -140,7 +140,7 @@ Use `zapi.Template` for small HTML templates loaded from disk. `{{ name }}` esca
 
 Use `zapi.EventStream` for buffered server-sent event responses. It writes `text/event-stream` and supports comments, event names, IDs, retry delays, and multi-line data.
 
-Use `zapi.StreamingResponse` when the std.http adapter should write chunks directly with `Transfer-Encoding: chunked`. `App.handle` collects the same stream into `response.body` for tests. The optional `context` pointer must outlive the response writer.
+Use `zapi.StreamingResponse` when the std.http adapter should write chunks directly with `Transfer-Encoding: chunked`. `ZAPI.handle` collects the same stream into `response.body` for tests. The optional `context` pointer must outlive the response writer.
 
 Use `zapi.Status` for standard named HTTP status codes, or `Status.fromCode(299)` for extension status codes. It also exposes `code()` and `reason()` for assertions and adapters.
 
