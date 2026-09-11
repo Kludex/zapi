@@ -24,11 +24,12 @@ icon: lucide/map
 - Transport-level streaming responses with `StreamingResponse` through the std.http adapter.
 - WebSocket routes through the std.http adapter.
 - In-process testing with response URL tracking, redirect target helpers, redirect history, method-level redirect controls, typed JSON parsing, typed query/form/JSON request helpers, scripted WebSocket exchanges with text, binary, and JSON message helpers, domain/path-scoped cookies, and server-exception controls.
-- A `std.http.Server.Request` adapter with buffered and opt-in streaming request body support, plus blocking `std.Io` serving.
+- A `std.http.Server.Request` adapter with buffered and opt-in streaming bodies.
+- A structured `std.Io` server with bounded connections, request scopes, deadlines, counters, and graceful shutdown.
 
 ## Not Yet
 
-- Complete the [async runtime plan](async-runtime.md), including cancellable accept, deadlines, request task groups, and streaming backpressure.
+- TLS and HTTP/2 transport adapters.
 - A complete Starlette compatibility test port.
 
 These are the main remaining high-level gaps before the framework can claim broader Starlette-style compatibility.

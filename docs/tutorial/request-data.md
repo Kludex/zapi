@@ -113,7 +113,8 @@ fn ingest(ctx: *zapi.Context) !struct { size: usize } {
     return .{ .size = size };
 }
 
-try app.serve(io, address, .{ .buffer_request_body = false });
+var server = zapi.Server.init(&app, io, .{ .buffer_request_body = false });
+try server.run(address);
 ```
 
 Buffered request helpers such as `Request.json`, `Request.formData`, and typed `Body(T)` parameters are designed for the default buffered adapter mode. Use `streamReader` for endpoints that want to consume the adapter body directly.

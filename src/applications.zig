@@ -138,6 +138,7 @@ pub const Request = struct {
     url_resolver: ?requests.URLResolver = null,
     url_root_path: ?[]const u8 = null,
     inherited_io: ?std.Io = null,
+    inherited_task_group: ?*std.Io.Group = null,
 
     pub fn init(method: Method, target: []const u8) Request {
         if (std.mem.indexOfScalar(u8, target, '?')) |idx| {
@@ -2452,6 +2453,7 @@ pub const Context = struct {
     path_params: std.StringHashMap([]const u8),
     route_metadata: *const RouteMetadata,
     state_ptr: ?*anyopaque = null,
+    task_group: ?*std.Io.Group = null,
 
     pub fn state(self: *Context, comptime T: type) *T {
         return @ptrCast(@alignCast(self.state_ptr.?));
@@ -2465,6 +2467,17 @@ pub const Context = struct {
     /// Returns the request-scoped I/O implementation supplied by the server.
     pub fn ioHandle(self: *const Context) !std.Io {
         return self.io orelse error.MissingIo;
+    }
+
+    /// Starts request-scoped work that must finish before the response is sent.
+    pub fn concurrent(
+        self: *const Context,
+        function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(function)),
+    ) !void {
+        const io = try self.ioHandle();
+        const task_group = self.task_group orelse return error.MissingTaskScope;
+        return task_group.concurrent(io, function, args);
     }
 
     pub fn requestState(self: *Context, comptime T: type) *T {
@@ -3771,6 +3784,18 @@ pub const ServeListenerOptions = struct {
     buffer_request_body: bool = true,
 };
 
+/// HTTP/1.1 connection handling limits used by a server runtime.
+pub const StreamOptions = struct {
+    /// Whether to buffer each request body before dispatch.
+    buffer_request_body: bool = true,
+    /// Maximum requests served over the connection.
+    max_requests: ?usize = null,
+    /// Maximum time allowed to receive each request head.
+    header_timeout: ?std.Io.Duration = null,
+    /// Maximum time allowed to read the body, run the handler, and write the response.
+    request_timeout: ?std.Io.Duration = null,
+};
+
 /// A named path converter.
 pub const PathConvertor = routing.PathConvertor;
 
@@ -4633,6 +4658,7 @@ pub const ZAPI = struct {
             .route_metadata = &route_item.metadata,
             .state_ptr = self.state_ptr,
             .io = self.options.io orelse request.inherited_io,
+            .task_group = request.inherited_task_group,
         };
         const payload = route_item.dispatch(&ctx) catch |err| switch (err) {
             error.Validation => return self.problemForRequest(scoped_request, .unprocessable_entity, "Validation error"),
@@ -4846,9 +4872,13 @@ pub const ZAPI = struct {
             });
         }
 
+        var request_tasks: std.Io.Group = .init;
+        defer if (io) |request_io| request_tasks.cancel(request_io);
+
         var request = Request.init(request_method, target);
         request.headers = headers.items;
         request.inherited_io = io;
+        request.inherited_task_group = if (io != null) &request_tasks else null;
 
         if (try self.handleWebSocketHttp(http_request, request)) return;
 
@@ -4868,6 +4898,7 @@ pub const ZAPI = struct {
 
         var response = try self.handleWithoutBackgroundTasks(request);
         defer response.deinit(self.allocator);
+        if (io) |request_io| try request_tasks.await(request_io);
 
         try self.finalizeResponseForTransport(&response);
         try self.respondHttp(http_request, response);
@@ -4900,9 +4931,13 @@ pub const ZAPI = struct {
             });
         }
 
+        var request_tasks: std.Io.Group = .init;
+        defer if (io) |request_io| request_tasks.cancel(request_io);
+
         var request = Request.init(request_method, target);
         request.headers = headers.items;
         request.inherited_io = io;
+        request.inherited_task_group = if (io != null) &request_tasks else null;
 
         if (try self.handleWebSocketHttp(http_request, request)) return;
 
@@ -4923,6 +4958,7 @@ pub const ZAPI = struct {
 
         var response = try self.handleWithoutBackgroundTasks(request);
         errdefer response.deinit(self.allocator);
+        if (io) |request_io| try request_tasks.await(request_io);
 
         request_body_reader.discardRemaining() catch |err| switch (err) {
             error.RequestBodyTooLarge => {
@@ -5199,24 +5235,126 @@ pub const ZAPI = struct {
         return false;
     }
 
-    fn handleStream(self: *ZAPI, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) !void {
+    /// Handles HTTP/1.1 requests from one connected transport stream.
+    pub fn handleStream(self: *ZAPI, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) !void {
+        return self.handleStreamWithOptions(io, stream, .{ .buffer_request_body = buffer_request_body });
+    }
+
+    /// Handles HTTP/1.1 requests with explicit transport limits.
+    pub fn handleStreamWithOptions(
+        self: *ZAPI,
+        io: std.Io,
+        stream: std.Io.net.Stream,
+        options: StreamOptions,
+    ) !void {
         var read_buffer: [8192]u8 = undefined;
         var write_buffer: [8192]u8 = undefined;
         var connection_reader = stream.reader(io, &read_buffer);
         var connection_writer = stream.writer(io, &write_buffer);
         var server = std.http.Server.init(&connection_reader.interface, &connection_writer.interface);
 
-        while (true) {
-            var request = server.receiveHead() catch |err| switch (err) {
+        var handled_requests: usize = 0;
+        while (options.max_requests == null or handled_requests < options.max_requests.?) {
+            var request = if (options.header_timeout) |timeout| request: {
+                const Result = union(enum) {
+                    received: ReceiveHeadResult,
+                    timeout: std.Io.Cancelable!void,
+                };
+                var result_buffer: [2]Result = undefined;
+                var select = std.Io.Select(Result).init(io, &result_buffer);
+                defer select.cancelDiscard();
+
+                select.async(.received, receiveRequestHead, .{&server});
+                select.async(.timeout, waitForRequestTimeout, .{ timeout, io });
+
+                break :request switch (try select.await()) {
+                    .received => |result| switch (result) {
+                        .request => |value| value,
+                        .closing => return,
+                        .failed => return error.RequestHeadFailed,
+                    },
+                    .timeout => |result| {
+                        try result;
+                        return error.HeaderTimeout;
+                    },
+                };
+            } else server.receiveHead() catch |err| switch (err) {
                 error.HttpConnectionClosing => return,
                 else => return err,
             };
-            if (buffer_request_body) {
+            if (options.request_timeout) |timeout| {
+                const Result = union(enum) {
+                    handled: RequestHandlingResult,
+                    timeout: std.Io.Cancelable!void,
+                };
+                var result_buffer: [2]Result = undefined;
+                var select = std.Io.Select(Result).init(io, &result_buffer);
+                defer select.cancelDiscard();
+
+                select.async(.handled, handleHttpRequest, .{ self, &request, io, options.buffer_request_body });
+                select.async(.timeout, waitForRequestTimeout, .{ timeout, io });
+
+                switch (try select.await()) {
+                    .handled => |result| switch (result) {
+                        .completed => {},
+                        .canceled => return error.Canceled,
+                        .failed => return error.RequestFailed,
+                    },
+                    .timeout => |result| {
+                        try result;
+                        return error.RequestTimeout;
+                    },
+                }
+            } else if (options.buffer_request_body) {
                 try self.handleHttpWithIo(&request, io);
             } else {
                 try self.handleHttpStreamingWithIo(&request, io);
             }
+            handled_requests += 1;
         }
+    }
+
+    const ReceiveHeadResult = union(enum) {
+        request: std.http.Server.Request,
+        closing,
+        failed,
+    };
+
+    const RequestHandlingResult = enum {
+        completed,
+        canceled,
+        failed,
+    };
+
+    fn receiveRequestHead(server: *std.http.Server) ReceiveHeadResult {
+        return .{ .request = server.receiveHead() catch |err| return switch (err) {
+            error.HttpConnectionClosing => .closing,
+            else => .failed,
+        } };
+    }
+
+    fn handleHttpRequest(
+        self: *ZAPI,
+        request: *std.http.Server.Request,
+        io: std.Io,
+        buffer_request_body: bool,
+    ) RequestHandlingResult {
+        if (buffer_request_body) {
+            self.handleHttpWithIo(request, io) catch |err| return switch (err) {
+                error.Canceled => .canceled,
+                else => .failed,
+            };
+        } else {
+            self.handleHttpStreamingWithIo(request, io) catch |err| return switch (err) {
+                error.Canceled => .canceled,
+                else => .failed,
+            };
+        }
+        return .completed;
+    }
+
+    fn waitForRequestTimeout(timeout: std.Io.Duration, io: std.Io) std.Io.Cancelable!void {
+        return std.Io.sleep(io, timeout, .awake);
     }
 
     fn handleStreamAndClose(
@@ -11321,9 +11459,18 @@ fn decompressGzipForTest(allocator: std.mem.Allocator, compressed: []const u8) !
     return output.toOwnedSlice();
 }
 
-fn ioAvailable(ctx: *Context) !struct { available: bool } {
-    _ = try ctx.ioHandle();
-    return .{ .available = true };
+const RequestTaskState = struct {
+    completed: std.atomic.Value(bool) = .init(false),
+};
+
+fn completeRequestTask(state: *RequestTaskState, io: std.Io) std.Io.Cancelable!void {
+    try std.Io.sleep(io, .fromMilliseconds(1), .awake);
+    state.completed.store(true, .release);
+}
+
+fn startRequestTask(ctx: *Context) !struct { started: bool } {
+    try ctx.concurrent(completeRequestTask, .{ ctx.state(RequestTaskState), try ctx.ioHandle() });
+    return .{ .started = true };
 }
 
 fn serveBoundOnce(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server) !void {
@@ -23180,9 +23327,11 @@ test "std.http adapter runs background tasks after responding" {
 test "serveListener provides request-scoped io without mutating app options" {
     const io = testing.io;
 
+    var task_state: RequestTaskState = .{};
     var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
-    try app.route(Route.get("/", ioAvailable, .{}));
+    app.setState(&task_state);
+    try app.route(Route.get("/", startRequestTask, .{}));
 
     const listen_address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{ .reuse_address = true });
@@ -23221,7 +23370,8 @@ test "serveListener provides request-scoped io without mutating app options" {
 
     try testing.expect(std.mem.indexOf(u8, response.written(), "HTTP/1.1 200 OK\r\n") != null);
     try testing.expect(std.mem.indexOf(u8, response.written(), "content-type: application/json\r\n") != null);
-    try testing.expect(std.mem.endsWith(u8, response.written(), "{\"available\":true}"));
+    try testing.expect(std.mem.endsWith(u8, response.written(), "{\"started\":true}"));
+    try testing.expect(task_state.completed.load(.acquire));
     try testing.expectEqual(null, app.options.io);
 }
 

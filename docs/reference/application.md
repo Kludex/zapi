@@ -35,9 +35,42 @@ Useful options include:
 
 Set `openapi_url`, `docs_url`, `oauth2_redirect_url`, or `redoc_url` to `null` to disable those built-in routes.
 
-`serve` and `serveListener` use buffered request bodies by default. Set `buffer_request_body = false` when handlers should consume the std.http adapter body through `Request.streamReader`.
+## Serving
 
-Set `concurrent_connections = true` to run connection tasks in an `std.Io.Group`. `max_concurrent_connections` defaults to `256` and applies backpressure before the server accepts more work. See the [async runtime plan](async-runtime.md) for the remaining lifecycle, cancellation, and streaming work.
+Use `Server` to run the application with bounded structured concurrency.
+
+```zig
+const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 8000);
+var server = zapi.Server.init(&app, io, .{
+    .max_concurrent_connections = 256,
+    .max_requests_per_connection = 1000,
+    .header_timeout = .fromSeconds(10),
+    .request_timeout = .fromSeconds(30),
+    .connection_timeout = .fromSeconds(120),
+    .graceful_shutdown_timeout = .fromSeconds(10),
+});
+try server.run(address);
+```
+
+`Server` owns the listener, connection task group, limits, application lifespan, and shutdown state. It applies backpressure before accepting work when every connection permit is in use.
+
+`max_requests_per_connection` bounds keep-alive reuse. `header_timeout` limits each request head, including idle keep-alive waits. `request_timeout` covers reading the body, running the handler, and writing the response. `connection_timeout` bounds the entire keep-alive connection.
+
+Set `max_connections` when you need a total connection limit for a test or a supervised worker.
+
+Call `requestShutdown` from another task or a signal handler bridge. It wakes a blocked accept operation and stops new connections. Active connections drain until `graceful_shutdown_timeout` expires. A timeout cancels the remaining connection tasks.
+
+```zig
+server.requestShutdown();
+```
+
+Inspect `state()` and `stats()` for lifecycle and connection counters. `forced_shutdown` reports whether the drain deadline expired.
+
+Set `buffer_request_body = false` when handlers should consume the std.http adapter body through `Request.streamReader`. Request and response streams use bounded transport buffers. Writes propagate backpressure and client disconnect errors through `std.Io.Writer`.
+
+Use `ctx.ioHandle()` for request-scoped I/O. Use `ctx.concurrent()` to start child work that must complete before the response is sent. Server cancellation propagates to these tasks.
+
+`ZAPI.serve` and `ZAPI.serveListener` remain available as low-level compatibility APIs.
 
 ## Routing
 
