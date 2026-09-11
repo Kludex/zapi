@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+zig fmt --check src examples build.zig
+zig build test
+zig build test -Doptimize=ReleaseSafe

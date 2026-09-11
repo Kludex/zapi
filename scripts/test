@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+zig build test
+zig build test -Doptimize=ReleaseSafe
+zig build test -Doptimize=ReleaseFast
+zig build test -Doptimize=ReleaseSmall

@@ -1,0 +1,46 @@
+[project]
+site_name = "zapi"
+site_description = "A Zig web framework with Starlette-style routes and OpenAPI 3.1 generated from endpoint signatures."
+site_author = "zapi contributors"
+copyright = "Copyright &copy; 2026 zapi contributors"
+
+nav = [
+  { "Overview" = "index.md" },
+  { "Tutorial" = [
+    { "First Steps" = "tutorial/first-steps.md" },
+    { "Request Data" = "tutorial/request-data.md" },
+    { "Testing" = "tutorial/testing.md" },
+  ] },
+  { "Reference" = [
+    { "Application" = "reference/application.md" },
+    { "OpenAPI" = "reference/openapi.md" },
+    { "Middleware" = "reference/middleware.md" },
+    { "Roadmap" = "reference/roadmap.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.code.copy",
+  "content.tabs.link",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme.icon]
+logo = "lucide/route"
