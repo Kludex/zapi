@@ -99,7 +99,9 @@ pub fn main(init: std.process.Init) !void {
     });
 
     const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 8000);
-    try app.serve(init.io, address, .{});
+    try app.serve(init.io, address, .{
+        .concurrent_connections = true,
+    });
 }
 ```
 
@@ -204,6 +206,7 @@ Use `Request.builder` for owned headers, cookies, query parameters, forms, and r
 - [Request data](docs/tutorial/request-data.md)
 - [Testing](docs/tutorial/testing.md)
 - [Application reference](docs/reference/application.md)
+- [Async runtime plan](docs/reference/async-runtime.md)
 - [OpenAPI reference](docs/reference/openapi.md)
 - [Middleware reference](docs/reference/middleware.md)
 - [Roadmap](docs/reference/roadmap.md)

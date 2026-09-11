@@ -28,7 +28,7 @@ icon: lucide/map
 
 ## Not Yet
 
-- A larger async/non-blocking serving story beyond the current blocking `std.Io` adapter.
+- Complete the [async runtime plan](async-runtime.md), including cancellable accept, deadlines, request task groups, and streaming backpressure.
 - A complete Starlette compatibility test port.
 
 These are the main remaining high-level gaps before the framework can claim broader Starlette-style compatibility.

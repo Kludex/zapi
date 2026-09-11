@@ -13,6 +13,7 @@ nav = [
   ] },
   { "Reference" = [
     { "Application" = "reference/application.md" },
+    { "Async Runtime Plan" = "reference/async-runtime.md" },
     { "OpenAPI" = "reference/openapi.md" },
     { "Middleware" = "reference/middleware.md" },
     { "Roadmap" = "reference/roadmap.md" },

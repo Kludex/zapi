@@ -37,6 +37,8 @@ Set `openapi_url`, `docs_url`, `oauth2_redirect_url`, or `redoc_url` to `null` t
 
 `serve` and `serveListener` use buffered request bodies by default. Set `buffer_request_body = false` when handlers should consume the std.http adapter body through `Request.streamReader`.
 
+Set `concurrent_connections = true` to run connection tasks in an `std.Io.Group`. `max_concurrent_connections` defaults to `256` and applies backpressure before the server accepts more work. See the [async runtime plan](async-runtime.md) for the remaining lifecycle, cancellation, and streaming work.
+
 ## Routing
 
 Include routers with `includeRouter`.

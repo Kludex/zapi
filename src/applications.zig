@@ -2462,6 +2462,11 @@ pub const Context = struct {
         return @ptrCast(@alignCast(ptr));
     }
 
+    /// Returns the request-scoped I/O implementation supplied by the server.
+    pub fn ioHandle(self: *const Context) !std.Io {
+        return self.io orelse error.MissingIo;
+    }
+
     pub fn requestState(self: *Context, comptime T: type) *T {
         return self.request.state(T);
     }
@@ -3753,6 +3758,7 @@ pub const ServeOptions = struct {
     listen: std.Io.net.IpAddress.ListenOptions = .{ .reuse_address = true },
     max_connections: ?usize = null,
     concurrent_connections: bool = false,
+    max_concurrent_connections: usize = 256,
     shutdown_signal: ?*ShutdownSignal = null,
     buffer_request_body: bool = true,
 };
@@ -3760,6 +3766,7 @@ pub const ServeOptions = struct {
 pub const ServeListenerOptions = struct {
     max_connections: ?usize = null,
     concurrent_connections: bool = false,
+    max_concurrent_connections: usize = 256,
     shutdown_signal: ?*ShutdownSignal = null,
     buffer_request_body: bool = true,
 };
@@ -4814,6 +4821,10 @@ pub const ZAPI = struct {
     }
 
     pub fn handleHttp(self: *ZAPI, http_request: *std.http.Server.Request) !void {
+        return self.handleHttpWithIo(http_request, self.options.io);
+    }
+
+    fn handleHttpWithIo(self: *ZAPI, http_request: *std.http.Server.Request, io: ?std.Io) !void {
         const target = try self.allocator.dupe(u8, http_request.head.target);
         defer self.allocator.free(target);
         const request_method = try methodFromHttp(http_request.head.method);
@@ -4837,6 +4848,7 @@ pub const ZAPI = struct {
 
         var request = Request.init(request_method, target);
         request.headers = headers.items;
+        request.inherited_io = io;
 
         if (try self.handleWebSocketHttp(http_request, request)) return;
 
@@ -4863,6 +4875,10 @@ pub const ZAPI = struct {
     }
 
     pub fn handleHttpStreaming(self: *ZAPI, http_request: *std.http.Server.Request) !void {
+        return self.handleHttpStreamingWithIo(http_request, self.options.io);
+    }
+
+    fn handleHttpStreamingWithIo(self: *ZAPI, http_request: *std.http.Server.Request, io: ?std.Io) !void {
         const target = try self.allocator.dupe(u8, http_request.head.target);
         defer self.allocator.free(target);
         const request_method = try methodFromHttp(http_request.head.method);
@@ -4886,6 +4902,7 @@ pub const ZAPI = struct {
 
         var request = Request.init(request_method, target);
         request.headers = headers.items;
+        request.inherited_io = io;
 
         if (try self.handleWebSocketHttp(http_request, request)) return;
 
@@ -5132,24 +5149,37 @@ pub const ZAPI = struct {
         try self.serveListener(io, &listener, .{
             .max_connections = options.max_connections,
             .concurrent_connections = options.concurrent_connections,
+            .max_concurrent_connections = options.max_concurrent_connections,
             .shutdown_signal = options.shutdown_signal,
             .buffer_request_body = options.buffer_request_body,
         });
     }
 
     pub fn serveListener(self: *ZAPI, io: std.Io, listener: *std.Io.net.Server, options: ServeListenerOptions) !void {
-        const previous_io = self.options.io;
-        if (self.options.io == null) self.options.io = io;
-        defer self.options.io = previous_io;
+        if (options.concurrent_connections and options.max_concurrent_connections == 0) {
+            return error.InvalidConcurrencyLimit;
+        }
 
         var handled_connections: usize = 0;
         var group: std.Io.Group = .init;
         defer group.cancel(io);
+        var connection_permits = std.Io.Semaphore{ .permits = options.max_concurrent_connections };
 
         while (!serveShouldStop(options) and (options.max_connections == null or handled_connections < options.max_connections.?)) {
-            var stream = try listener.accept(io);
+            if (options.concurrent_connections) try connection_permits.wait(io);
+            var stream = listener.accept(io) catch |err| {
+                if (options.concurrent_connections) connection_permits.post(io);
+                return err;
+            };
             if (options.concurrent_connections) {
-                group.concurrent(io, handleStreamAndClose, .{ self, io, stream, options.buffer_request_body }) catch |err| {
+                group.concurrent(io, handleStreamAndClose, .{
+                    self,
+                    io,
+                    stream,
+                    options.buffer_request_body,
+                    &connection_permits,
+                }) catch |err| {
+                    connection_permits.post(io);
                     stream.close(io);
                     return err;
                 };
@@ -5182,14 +5212,21 @@ pub const ZAPI = struct {
                 else => return err,
             };
             if (buffer_request_body) {
-                try self.handleHttp(&request);
+                try self.handleHttpWithIo(&request, io);
             } else {
-                try self.handleHttpStreaming(&request);
+                try self.handleHttpStreamingWithIo(&request, io);
             }
         }
     }
 
-    fn handleStreamAndClose(self: *ZAPI, io: std.Io, stream: std.Io.net.Stream, buffer_request_body: bool) std.Io.Cancelable!void {
+    fn handleStreamAndClose(
+        self: *ZAPI,
+        io: std.Io,
+        stream: std.Io.net.Stream,
+        buffer_request_body: bool,
+        connection_permits: *std.Io.Semaphore,
+    ) std.Io.Cancelable!void {
+        defer connection_permits.post(io);
         defer stream.close(io);
         self.handleStream(io, stream, buffer_request_body) catch |err| switch (err) {
             error.Canceled => return error.Canceled,
@@ -11282,6 +11319,11 @@ fn decompressGzipForTest(allocator: std.mem.Allocator, compressed: []const u8) !
     errdefer output.deinit();
     _ = try decompressor.reader.streamRemaining(&output.writer);
     return output.toOwnedSlice();
+}
+
+fn ioAvailable(ctx: *Context) !struct { available: bool } {
+    _ = try ctx.ioHandle();
+    return .{ .available = true };
 }
 
 fn serveBoundOnce(app: *ZAPI, io: std.Io, listener: *std.Io.net.Server) !void {
@@ -23135,12 +23177,12 @@ test "std.http adapter runs background tasks after responding" {
     try testing.expectEqual(@as(usize, 3), state.count);
 }
 
-test "serveListener accepts tcp connections and serves app responses" {
+test "serveListener provides request-scoped io without mutating app options" {
     const io = testing.io;
 
     var app = ZAPI.init(testing.allocator, .{});
     defer app.deinit();
-    try app.route(Route.get("/", plainText, .{}));
+    try app.route(Route.get("/", ioAvailable, .{}));
 
     const listen_address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
     var listener = try listen_address.listen(io, .{ .reuse_address = true });
@@ -23178,8 +23220,25 @@ test "serveListener accepts tcp connections and serves app responses" {
     try server_future.await(io);
 
     try testing.expect(std.mem.indexOf(u8, response.written(), "HTTP/1.1 200 OK\r\n") != null);
-    try testing.expect(std.mem.indexOf(u8, response.written(), "content-type: text/plain; charset=utf-8\r\n") != null);
-    try testing.expect(std.mem.endsWith(u8, response.written(), "Hello, world"));
+    try testing.expect(std.mem.indexOf(u8, response.written(), "content-type: application/json\r\n") != null);
+    try testing.expect(std.mem.endsWith(u8, response.written(), "{\"available\":true}"));
+    try testing.expectEqual(null, app.options.io);
+}
+
+test "serveListener rejects an empty concurrency limit" {
+    const io = testing.io;
+    var app = ZAPI.init(testing.allocator, .{});
+    defer app.deinit();
+
+    const listen_address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = try listen_address.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+
+    try testing.expectError(error.InvalidConcurrencyLimit, app.serveListener(io, &listener, .{
+        .max_connections = 0,
+        .concurrent_connections = true,
+        .max_concurrent_connections = 0,
+    }));
 }
 
 test "serveListener can stream request bodies without adapter buffering" {
